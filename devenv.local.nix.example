@@ -1,0 +1,5 @@
+{
+  services.devcontainer.enable-vscode = true;
+  services.devcontainer.enable-vscode-vim = true;
+  services.devcontainer.enable-podman = true;
+}

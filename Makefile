@@ -1,0 +1,2 @@
+shell:
+	devenv shell
