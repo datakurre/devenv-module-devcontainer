@@ -36,13 +36,6 @@ let
     }
     // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
       postCreateCommand = "direnv allow";
-    }
-    // lib.optionalAttrs (cfg.networkMode == "host") {
-      portsAttributes = {
-        "*" = {
-          onAutoForward = "ignore";
-        };
-      };
     };
   file = settingsFormat.generate "devcontainer.json" filteredSettings;
   inherit (lib)
@@ -102,11 +95,7 @@ in
     (inputs.devenv.modules + "/integrations/devcontainer.nix")
   ];
   options.devcontainer = {
-    enable = lib.mkOption {
-      type = types.bool;
-      description = "Whether to enable generation .devcontainer.json for devenv integration";
-      default = true;
-    };
+    enable = lib.mkEnableOption "generation .devcontainer.json for devenv integration";
 
     mode = mkOption {
       type = types.enum [
@@ -119,7 +108,10 @@ in
     };
 
     networkMode = lib.mkOption {
-      type = lib.types.enum [ "bridge" "host" ];
+      type = lib.types.enum [
+        "bridge"
+        "host"
+      ];
       default = "bridge";
       description = ''
         Network mode for the container.
@@ -175,33 +167,36 @@ in
       '';
     };
   };
-  config.packages =
-    [ ]
-    ++ (optionals (cfg.mode == "builtin") [
-      (pkgs.vscode-with-extensions.override {
-        vscode = pkgs.vscode;
-        vscodeExtensions =
-          [
-            pkgs.vscode-extensions.ms-vscode-remote.remote-containers
-          ]
-          ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
-            pkgs.vscode-extensions.vscodevim.vim
-          ];
-      })
-    ])
-    ++ (optionals (cfg.mode == "builtin") [
-      pkgs.podman
-      pkgs.crun
-      pkgs.conmon
-      pkgs.skopeo
-      pkgs.slirp4netns
-      pkgs.fuse-overlayfs
-    ]);
-  config.enterShell =
-    ''
-      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
-    ''
-    + (lib.optionalString (cfg.mode == "builtin") ''
-      ${podmanSetupScript}
-    '');
+
+  config = lib.mkIf config.devcontainer.enable {
+    packages =
+      [ ]
+      ++ (optionals (cfg.mode == "builtin") [
+        (pkgs.vscode-with-extensions.override {
+          vscode = pkgs.vscode;
+          vscodeExtensions =
+            [
+              pkgs.vscode-extensions.ms-vscode-remote.remote-containers
+            ]
+            ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
+              pkgs.vscode-extensions.vscodevim.vim
+            ];
+        })
+      ])
+      ++ (optionals (cfg.mode == "builtin") [
+        pkgs.podman
+        pkgs.crun
+        pkgs.conmon
+        pkgs.skopeo
+        pkgs.slirp4netns
+        pkgs.fuse-overlayfs
+      ]);
+    enterShell =
+      ''
+        cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
+      ''
+      + (lib.optionalString (cfg.mode == "builtin") ''
+        ${podmanSetupScript}
+      '');
+  };
 }
