@@ -8,6 +8,7 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
+  networkModeArgs = lib.optionals (cfg.settings.networkMode == "host") [ "--network=host" ];
   podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "builtin") {
     containerUser = "vscode";
     containerEnv = {
@@ -15,11 +16,17 @@ let
     };
     runArgs = [
       "--userns=keep-id"
-    ];
+    ] ++ networkModeArgs;
   };
+  dockerSettings = lib.optionalAttrs (cfg.mode == "docker") (
+    lib.optionalAttrs (networkModeArgs != [ ]) {
+      runArgs = networkModeArgs;
+    }
+  );
   filteredSettings =
     cfg.settings
     // podmanSettings
+    // dockerSettings
     // {
       customizations = cfg.settings.customizations // {
         vscode = cfg.settings.customizations.vscode // {
@@ -140,6 +147,16 @@ in
           ];
           description = ''
             A list of pre-installed VS Code extensions.
+          '';
+        };
+
+        options.networkMode = lib.mkOption {
+          type = lib.types.enum [ "bridge" "host" ];
+          default = "bridge";
+          description = ''
+            Network mode for the container.
+            - "bridge": Use default network mode
+            - "host": Use host networking (shares the host's network namespace)
           '';
         };
       };

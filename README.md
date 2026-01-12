@@ -103,6 +103,28 @@ You can pass any valid devcontainer settings:
 }
 ```
 
+### Network Mode
+
+Configure the container network mode. Currently supports host networking:
+
+```nix
+{
+  devcontainer.settings.networkMode = "host";
+}
+```
+
+This option works with all container modes:
+- **docker**: Uses `--network=host` to share the host's network namespace
+- **podman**: Uses `--network=host` for host networking
+- **builtin**: Same as podman mode
+
+When set to `"host"`, the container shares the host's network stack, allowing direct access to host network interfaces and services. This is useful for:
+- Accessing services running on the host without port forwarding
+- Testing network applications that need specific ports
+- Developing network tools that require low-level network access
+
+**Default**: `null` (uses bridge networking)
+
 ## Local Configuration
 
 For personal settings that shouldn't be committed, create a `devenv.local.nix` file. See `devenv.local.nix.example` for reference:
