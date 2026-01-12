@@ -9,7 +9,7 @@ let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
   networkModeArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
-  podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "builtin") {
+  podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "self-contained") {
     containerUser = "vscode";
     containerEnv = {
       HOME = "/home/vscode";
@@ -18,7 +18,7 @@ let
       "--userns=keep-id"
     ] ++ networkModeArgs;
   };
-  dockerSettings = lib.optionalAttrs (cfg.mode == "docker") (
+  defaultSettings = lib.optionalAttrs (cfg.mode == "default") (
     lib.optionalAttrs (networkModeArgs != [ ]) {
       runArgs = networkModeArgs;
     }
@@ -26,7 +26,7 @@ let
   filteredSettings =
     cfg.settings
     // podmanSettings
-    // dockerSettings
+    // defaultSettings
     // {
       customizations = cfg.settings.customizations // {
         vscode = cfg.settings.customizations.vscode // {
@@ -51,7 +51,7 @@ let
   podmanSetupScript =
     let
       policyConf = pkgs.writeText "policy.conf" ''
-        {"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}
+        {"default":[{"type":"insecureAcceptAnything"}],"transports":{"default-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}
       '';
       registriesConf = pkgs.writeText "registries.conf" ''
         [registries]
@@ -60,7 +60,7 @@ let
         [registries.insecure]
         registries = []
         [registries.search]
-        registries = ["docker.io", "quay.io"]
+        registries = ["default.io", "quay.io"]
       '';
       storageConf = pkgs.writeText "storage.conf" ''
         [storage]
@@ -104,10 +104,10 @@ in
     mode = mkOption {
       type = types.enum [
         "podman"
-        "docker"
-        "builtin"
+        "default"
+        "self-contained"
       ];
-      default = "docker";
+      default = "default";
       description = "The container runtime mode to use";
     };
 
@@ -175,7 +175,7 @@ in
   config = lib.mkIf config.devcontainer.enable {
     packages =
       [ ]
-      ++ (optionals (cfg.mode == "builtin") [
+      ++ (optionals (cfg.mode == "self-contained") [
         (pkgs.vscode-with-extensions.override {
           vscode = pkgs.vscode;
           vscodeExtensions =
@@ -187,7 +187,7 @@ in
             ];
         })
       ])
-      ++ (optionals (cfg.mode == "builtin") [
+      ++ (optionals (cfg.mode == "self-contained") [
         pkgs.podman
         pkgs.crun
         pkgs.conmon
@@ -199,7 +199,7 @@ in
       ''
         cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
       ''
-      + (lib.optionalString (cfg.mode == "builtin") ''
+      + (lib.optionalString (cfg.mode == "self-contained") ''
         ${podmanSetupScript}
       '');
   };
