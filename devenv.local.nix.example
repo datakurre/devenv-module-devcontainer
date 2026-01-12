@@ -1,5 +1,10 @@
 {
-  services.devcontainer.enable-vscode = true;
-  services.devcontainer.enable-vscode-vim = true;
-  services.devcontainer.enable-podman = true;
+  devcontainer.mode = "builtin";
+  devcontainer.settings.customizations.vscode.extensions = [
+    "bbenoist.Nix"
+    "GitHub.copilot"
+    "GitHub.copilot-chat"
+    "mkhl.direnv"
+    "vscodevim.vim"
+  ];
 }

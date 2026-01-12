@@ -6,7 +6,31 @@
   ...
 }:
 let
-  cfg = config.services.devcontainer;
+  cfg = config.devcontainer;
+  settingsFormat = pkgs.formats.json { };
+  podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "builtin") {
+    containerUser = "vscode";
+    containerEnv = {
+      HOME = "/home/vscode";
+    };
+    runArgs = [
+      "--userns=keep-id"
+    ];
+  };
+  filteredSettings =
+    cfg.settings
+    // podmanSettings
+    // {
+      customizations = cfg.settings.customizations // {
+        vscode = cfg.settings.customizations.vscode // {
+          extensions = lib.filter (ext: ext != "vscodevim.vim") cfg.settings.customizations.vscode.extensions;
+        };
+      };
+    }
+    // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
+      postCreateCommand = "direnv allow";
+    };
+  file = settingsFormat.generate "devcontainer.json" filteredSettings;
   inherit (lib)
     types
     mkOption
@@ -60,35 +84,88 @@ let
     '';
 in
 {
-  options.services.devcontainer = {
-    enable-podman = mkOption {
+  disabledModules = [
+    (inputs.devenv.modules + "/integrations/devcontainer.nix")
+  ];
+  options.devcontainer = {
+    enable = lib.mkOption {
       type = types.bool;
-      default = false;
+      description = "Whether to enable generation .devcontainer.json for devenv integration";
+      default = true;
     };
-    enable-vscode = mkOption {
-      type = types.bool;
-      default = false;
+
+    mode = mkOption {
+      type = types.enum [
+        "podman"
+        "docker"
+        "builtin"
+      ];
+      default = "docker";
+      description = "The container runtime mode to use";
     };
-    enable-vscode-vim = mkOption {
-      type = types.bool;
-      default = false;
+
+    settings = lib.mkOption {
+      type = lib.types.submodule {
+        freeformType = settingsFormat.type;
+
+        options.image = lib.mkOption {
+          type = lib.types.str;
+          default = "ghcr.io/cachix/devenv/devcontainer:latest";
+          description = ''
+            The name of an image in a container registry.
+          '';
+        };
+
+        options.overrideCommand = lib.mkOption {
+          type = lib.types.anything;
+          default = false;
+          description = ''
+            Override the default command.
+          '';
+        };
+
+        options.updateContentCommand = lib.mkOption {
+          type = lib.types.anything;
+          default = "devenv shell -- echo Ready.";
+          description = ''
+            A command to run after the container is created.
+          '';
+        };
+
+        options.customizations.vscode.extensions = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [
+            "mkhl.direnv"
+            "bbenoist.Nix"
+          ];
+          description = ''
+            A list of pre-installed VS Code extensions.
+          '';
+        };
+      };
+
+      default = { };
+
+      description = ''
+        Devcontainer settings.
+      '';
     };
   };
   config.packages =
     [ ]
-    ++ (optionals cfg.enable-vscode [
+    ++ (optionals (cfg.mode == "builtin") [
       (pkgs.vscode-with-extensions.override {
         vscode = pkgs.vscode;
         vscodeExtensions =
           [
             pkgs.vscode-extensions.ms-vscode-remote.remote-containers
           ]
-          ++ optionals cfg.enable-vscode-vim [
+          ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
             pkgs.vscode-extensions.vscodevim.vim
           ];
       })
     ])
-    ++ (optionals cfg.enable-podman [
+    ++ (optionals (cfg.mode == "builtin") [
       pkgs.podman
       pkgs.crun
       pkgs.conmon
@@ -96,7 +173,11 @@ in
       pkgs.slirp4netns
       pkgs.fuse-overlayfs
     ]);
-  config.enterShell = mkIf cfg.enable-podman ''
-    ${podmanSetupScript}
-  '';
+  config.enterShell =
+    ''
+      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
+    ''
+    + (lib.optionalString (cfg.mode == "builtin") ''
+      ${podmanSetupScript}
+    '');
 }
