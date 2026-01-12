@@ -8,7 +8,7 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
-  networkModeArgs = lib.optionals (cfg.settings.networkMode == "host") [ "--network=host" ];
+  networkModeArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
   podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "builtin") {
     containerUser = "vscode";
     containerEnv = {
@@ -111,6 +111,16 @@ in
       description = "The container runtime mode to use";
     };
 
+    networkMode = lib.mkOption {
+      type = lib.types.enum [ "bridge" "host" ];
+      default = "bridge";
+      description = ''
+        Network mode for the container.
+        - "bridge": Use default network mode
+        - "host": Use host networking (shares the host's network namespace)
+      '';
+    };
+
     settings = lib.mkOption {
       type = lib.types.submodule {
         freeformType = settingsFormat.type;
@@ -147,16 +157,6 @@ in
           ];
           description = ''
             A list of pre-installed VS Code extensions.
-          '';
-        };
-
-        options.networkMode = lib.mkOption {
-          type = lib.types.enum [ "bridge" "host" ];
-          default = "bridge";
-          description = ''
-            Network mode for the container.
-            - "bridge": Use default network mode
-            - "host": Use host networking (shares the host's network namespace)
           '';
         };
       };
