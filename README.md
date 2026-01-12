@@ -82,7 +82,7 @@ Use [devenv profiles](https://devenv.sh/reference/options/#profiles) for user-sp
     "mkhl.direnv"
   ];
 
-  # User-specific profile
+  # Alternative configuration profiles
   profiles.myprofile.module = {
     devcontainer.enable = true;
     devcontainer.mode = "self-contained";
