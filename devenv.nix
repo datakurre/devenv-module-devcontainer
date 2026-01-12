@@ -36,6 +36,13 @@ let
     }
     // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
       postCreateCommand = "direnv allow";
+    }
+    // lib.optionalAttrs (cfg.networkMode == "host") {
+      portsAttributes = {
+        "*" = {
+          onAutoForward = "ignore";
+        };
+      };
     };
   file = settingsFormat.generate "devcontainer.json" filteredSettings;
   inherit (lib)
