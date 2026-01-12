@@ -31,6 +31,10 @@ let
       customizations = cfg.settings.customizations // {
         vscode = cfg.settings.customizations.vscode // {
           extensions = lib.filter (ext: ext != "vscodevim.vim") cfg.settings.customizations.vscode.extensions;
+        } // lib.optionalAttrs (cfg.networkMode == "host") {
+          settings = {
+            "remote.autoForwardPorts" = false;
+          };
         };
       };
     }
