@@ -23,7 +23,7 @@ Enable and configure in `devenv.nix`:
 { pkgs, ... }:
 {
   devcontainer.enable = true;
-  devcontainer.mode = "podman";  # "default" (default), "podman", or "self-contained"
+  devcontainer.tweaks = [ "podman" "vscode" ]; # List of tweaks to apply: "rootless", "podman", "vscode"
   devcontainer.networkMode = "host";  # "bridge" (default) or "host"
   devcontainer.settings.customizations.vscode.extensions = [
     "mkhl.direnv"
@@ -33,21 +33,15 @@ Enable and configure in `devenv.nix`:
 }
 ```
 
-### Modes
+### Tweaks
 
-| Mode | Description |
-|------|-------------|
-| `default` | Creates minimal devcontainer.json |
-| `podman` | Creates rootless Podman compatible devcontainer.json |
-| `self-contained` | Provides rootless Podman + VS Code via Nix |
+The `devcontainer.tweaks` option is a list of strings that enable specific adjustments to the devcontainer configuration.
 
-With **podman**, configure VS Code:
-```json
-{
-  "dev.containers.dockerPath": "podman",
-  "dev.containers.dockerSocketPath": "/var/run/user/1000/podman/podman.sock"
-}
-```
+| Tweak | Description |
+|---|---|
+| `rootless` | Enables rootless Podman configuration. |
+| `podman` | Provides Podman and its dependencies via Nix, suitable for a self-contained environment. |
+| `vscode` | Provides VS Code with extensions via Nix, suitable for a self-contained environment. |
 
 ### Network Mode
 
@@ -85,7 +79,7 @@ Use [devenv profiles](https://devenv.sh/reference/options/#profiles) for user-sp
   # Alternative configuration profiles
   profiles.myprofile.module = {
     devcontainer.enable = true;
-    devcontainer.mode = "self-contained";
+    devcontainer.tweaks = [ "self-contained", "vscode" ];
     devcontainer.settings.customizations.vscode.extensions = [
       "vscodevim.vim"
     ];

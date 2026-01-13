@@ -9,33 +9,32 @@ let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
   networkModeArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
-  podmanSettings = lib.optionalAttrs (cfg.mode == "podman" || cfg.mode == "self-contained") {
-    containerUser = "vscode";
-    containerEnv = {
-      HOME = "/home/vscode";
-    };
-    runArgs = [
-      "--userns=keep-id"
-    ] ++ networkModeArgs;
-  };
-  defaultSettings = lib.optionalAttrs (cfg.mode == "default") (
-    lib.optionalAttrs (networkModeArgs != [ ]) {
-      runArgs = networkModeArgs;
-    }
-  );
+  podmanSettings =
+    lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks)
+      {
+        containerUser = "vscode";
+        containerEnv = {
+          HOME = "/home/vscode";
+        };
+        runArgs = [
+          "--userns=keep-id"
+        ] ++ networkModeArgs;
+      };
   filteredSettings =
     cfg.settings
     // podmanSettings
-    // defaultSettings
     // {
       customizations = cfg.settings.customizations // {
-        vscode = cfg.settings.customizations.vscode // {
-          extensions = lib.filter (ext: ext != "vscodevim.vim") cfg.settings.customizations.vscode.extensions;
-        } // lib.optionalAttrs (cfg.networkMode == "host") {
-          settings = {
-            "remote.autoForwardPorts" = false;
+        vscode =
+          cfg.settings.customizations.vscode
+          // {
+            extensions = lib.filter (ext: ext != "vscodevim.vim") cfg.settings.customizations.vscode.extensions;
+          }
+          // lib.optionalAttrs (cfg.networkMode == "host") {
+            settings = {
+              "remote.autoForwardPorts" = false;
+            };
           };
-        };
       };
     }
     // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
@@ -101,14 +100,16 @@ in
   options.devcontainer = {
     enable = lib.mkEnableOption "generation .devcontainer.json for devenv integration";
 
-    mode = mkOption {
-      type = types.enum [
-        "podman"
-        "default"
-        "self-contained"
-      ];
-      default = "default";
-      description = "The container runtime mode to use";
+    tweaks = mkOption {
+      type = types.listOf (
+        types.enum [
+          "rootless"
+          "podman"
+          "vscode"
+        ]
+      );
+      default = [ ];
+      description = "List of tweaks to apply to the devcontainer configuration.";
     };
 
     networkMode = lib.mkOption {
@@ -175,7 +176,7 @@ in
   config = lib.mkIf config.devcontainer.enable {
     packages =
       [ ]
-      ++ (optionals (cfg.mode == "self-contained") [
+      ++ (optionals (lib.elem "vscode" cfg.tweaks) [
         (pkgs.vscode-with-extensions.override {
           vscode = pkgs.vscode;
           vscodeExtensions =
@@ -187,7 +188,7 @@ in
             ];
         })
       ])
-      ++ (optionals (cfg.mode == "self-contained") [
+      ++ (optionals (lib.elem "podman" cfg.tweaks) [
         pkgs.podman
         pkgs.crun
         pkgs.conmon
@@ -199,7 +200,7 @@ in
       ''
         cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
       ''
-      + (lib.optionalString (cfg.mode == "self-contained") ''
+      + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
         ${podmanSetupScript}
       '');
   };

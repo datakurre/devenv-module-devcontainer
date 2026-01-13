@@ -1,6 +1,6 @@
 {
   devcontainer.enable = true;
-  devcontainer.mode = "builtin";
+  devcontainer.tweaks = [ "podman" "vscode" ];
   devcontainer.networkMode = "host";
   devcontainer.settings.customizations.vscode.extensions = [
     "bbenoist.Nix"
