@@ -8,9 +8,8 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
-  networkModeArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
   podmanSettings =
-    lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks)
+    if (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) then
       {
         containerUser = "vscode";
         containerEnv = {
@@ -18,9 +17,13 @@ let
         };
         runArgs = [
           "--userns=keep-id"
-        ] ++ networkModeArgs;
+        ] ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
+      }
+    else
+      {
+        runArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
       };
-  filteredSettings =
+  devcontainerSettings =
     cfg.settings
     // podmanSettings
     // {
@@ -40,7 +43,7 @@ let
     // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
       postCreateCommand = "direnv allow";
     };
-  file = settingsFormat.generate "devcontainer.json" filteredSettings;
+  file = settingsFormat.generate "devcontainer.json" devcontainerSettings;
   inherit (lib)
     types
     mkOption
