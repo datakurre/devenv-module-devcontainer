@@ -8,6 +8,19 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
+  gpgAgentSettings =
+    if (lib.elem "gpg-agent" cfg.tweaks) then
+      {
+        mounts = [
+          "source=\${localEnv:XDG_RUNTIME_DIR}/gnupg/S.gpg-agent,target=/run/host-gpg-agent,type=bind,readonly"
+        ];
+        remoteEnv = {
+          GPG_TTY = "/dev/pts/0";
+        };
+        postStartCommand = "mkdir -p /home/vscode/.gnupg && rm -f /home/vscode/.gnupg/S.gpg-agent && ln -s /run/host-gpg-agent /home/vscode/.gnupg/S.gpg-agent";
+      }
+    else
+      { };
   podmanSettings =
     if (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) then
       {
@@ -26,6 +39,7 @@ let
   devcontainerSettings =
     cfg.settings
     // podmanSettings
+    // gpgAgentSettings
     // {
       customizations = cfg.settings.customizations // {
         vscode =
@@ -109,6 +123,7 @@ in
           "rootless"
           "podman"
           "vscode"
+          "gpg-agent"
         ]
       );
       default = [ ];
