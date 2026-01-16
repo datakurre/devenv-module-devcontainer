@@ -72,11 +72,6 @@ in
   profiles.devcontainer.module = {
     devcontainer.enable = true;
     devcontainer.networkMode = "host";
-    devcontainer.tweaks = [ "podman" "vscode" ];
-    devcontainer.settings.customizations.vscode.extensions = [
-      "mkhl.direnv"
-      "bbenoist.Nix"
-    ];
   };
 }
 ```
@@ -100,7 +95,10 @@ Use `devenv.local.nix` for personal settings:
 ```nix
 {
   profiles.devcontainer.module = {
+    devcontainer.tweaks = [ "podman" "vscode" ];
     devcontainer.settings.customizations.vscode.extensions = [
+      "mkhl.direnv"
+      "bbenoist.Nix"
       "vscodevim.vim"
     ];
   };
