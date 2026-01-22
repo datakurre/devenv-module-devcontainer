@@ -36,7 +36,7 @@ Enable in `devenv.nix`:
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `tweaks` | `rootless`, `podman`, `vscode` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code |
+| `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container |
 | `networkMode` | `bridge`, `host` | `host` shares host network namespace |
 | `settings` | any | Pass-through to devcontainer.json |
 
