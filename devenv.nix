@@ -11,10 +11,10 @@ let
   gpgAgentSettings =
     if (lib.elem "gpg-agent" cfg.tweaks) then
       {
-        mounts = [
+        mounts = (cfg.settings.mounts or [ ]) ++ [
           "source=\${localEnv:XDG_RUNTIME_DIR}/gnupg/S.gpg-agent,target=/run/host-gpg-agent,type=bind,readonly"
         ];
-        remoteEnv = {
+        remoteEnv = (cfg.settings.remoteEnv or { }) // {
           GPG_TTY = "/dev/pts/0";
         };
         postStartCommand = "mkdir -p /home/vscode/.gnupg && rm -f /home/vscode/.gnupg/S.gpg-agent && ln -s /run/host-gpg-agent /home/vscode/.gnupg/S.gpg-agent";
@@ -25,38 +25,45 @@ let
     if (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) then
       {
         containerUser = "vscode";
-        containerEnv = {
+        containerEnv = (cfg.settings.containerEnv or { }) // {
           HOME = "/home/vscode";
         };
-        runArgs = [
+        runArgs = (cfg.settings.runArgs or [ ]) ++ [
           "--userns=keep-id"
         ] ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
       }
     else
       {
-        runArgs = lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
+        runArgs = (cfg.settings.runArgs or [ ]) ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
       };
   devcontainerSettings =
-    cfg.settings
-    // podmanSettings
-    // gpgAgentSettings
-    // {
-      customizations = cfg.settings.customizations // {
-        vscode =
-          cfg.settings.customizations.vscode
-          // {
-            extensions = lib.filter (ext: ext != "vscodevim.vim") cfg.settings.customizations.vscode.extensions;
-          }
-          // lib.optionalAttrs (cfg.networkMode == "host") {
-            settings = {
+    let
+      # First, merge the base settings with podman and gpg-agent settings
+      mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate cfg.settings podmanSettings) gpgAgentSettings;
+
+      # Get the default extensions and user extensions
+      defaultExtensions = [ "mkhl.direnv" "bbenoist.Nix" ];
+      userExtensions = mergedSettings.customizations.vscode.extensions or [];
+      # Merge extensions: defaults + user extensions, then remove vscodevim.vim
+      allExtensions = lib.unique (defaultExtensions ++ userExtensions);
+      filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
+
+      # Then apply customizations that need special handling
+      finalSettings = mergedSettings // {
+        customizations = mergedSettings.customizations // {
+          vscode = mergedSettings.customizations.vscode // {
+            extensions = filteredExtensions;
+          } // lib.optionalAttrs (cfg.networkMode == "host") {
+            settings = mergedSettings.customizations.vscode.settings or {} // {
               "remote.autoForwardPorts" = false;
             };
           };
+        };
+      } // lib.optionalAttrs (lib.elem "mkhl.direnv" allExtensions) {
+        postCreateCommand = "direnv allow";
       };
-    }
-    // lib.optionalAttrs (lib.elem "mkhl.direnv" cfg.settings.customizations.vscode.extensions) {
-      postCreateCommand = "direnv allow";
-    };
+    in
+    finalSettings;
   file = settingsFormat.generate "devcontainer.json" devcontainerSettings;
   inherit (lib)
     types
