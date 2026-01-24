@@ -1,6 +1,12 @@
 {
   devcontainer.enable = true;
-  devcontainer.tweaks = [ "podman" "vscode" ];
+  devcontainer.tweaks = [
+    "gpg-agent"
+    "netrc"
+    "podman"
+    "vscode"
+  ];
+  devcontainer.netrc = "/home/datakurre/.netrc";
   devcontainer.networkMode = "host";
   devcontainer.settings.customizations.vscode.extensions = [
     "bbenoist.Nix"
