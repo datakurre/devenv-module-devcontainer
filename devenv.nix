@@ -21,6 +21,21 @@ let
       }
     else
       { };
+  netrcSettings =
+    if (lib.elem "netrc" cfg.tweaks) then
+      {
+        containerEnv = (cfg.settings.containerEnv or { }) // {
+          NETRC = "/tmp/.netrc";
+        };
+        onCreateCommand =
+          let
+            netrcCommand = "mkdir -p /home/vscode/.config/nix && echo 'extra-sandbox-paths = /tmp/.netrc' > /home/vscode/.config/nix/nix.conf && cat /etc/nix/netrc > /tmp/.netrc";
+            existingCommand = cfg.settings.onCreateCommand or "";
+          in
+          if existingCommand != "" then "${existingCommand} && ${netrcCommand}" else netrcCommand;
+      }
+    else
+      { };
   podmanSettings =
     if (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) then
       {
@@ -28,40 +43,54 @@ let
         containerEnv = (cfg.settings.containerEnv or { }) // {
           HOME = "/home/vscode";
         };
-        runArgs = (cfg.settings.runArgs or [ ]) ++ [
-          "--userns=keep-id"
-        ] ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
+        runArgs =
+          (cfg.settings.runArgs or [ ])
+          ++ [
+            "--userns=keep-id"
+          ]
+          ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
       }
     else
       {
-        runArgs = (cfg.settings.runArgs or [ ]) ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
+        runArgs =
+          (cfg.settings.runArgs or [ ])
+          ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
       };
   devcontainerSettings =
     let
-      # First, merge the base settings with podman and gpg-agent settings
-      mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate cfg.settings podmanSettings) gpgAgentSettings;
+      # First, merge the base settings with podman, gpg-agent, and netrc settings
+      mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate cfg.settings podmanSettings) gpgAgentSettings) netrcSettings;
 
       # Get the default extensions and user extensions
-      defaultExtensions = [ "mkhl.direnv" "bbenoist.Nix" ];
-      userExtensions = mergedSettings.customizations.vscode.extensions or [];
+      defaultExtensions = [
+        "mkhl.direnv"
+        "bbenoist.Nix"
+      ];
+      userExtensions = mergedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions, then remove vscodevim.vim
       allExtensions = lib.unique (defaultExtensions ++ userExtensions);
       filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
 
       # Then apply customizations that need special handling
-      finalSettings = mergedSettings // {
-        customizations = mergedSettings.customizations // {
-          vscode = mergedSettings.customizations.vscode // {
-            extensions = filteredExtensions;
-          } // lib.optionalAttrs (cfg.networkMode == "host") {
-            settings = mergedSettings.customizations.vscode.settings or {} // {
-              "remote.autoForwardPorts" = false;
-            };
+      finalSettings =
+        mergedSettings
+        // {
+          customizations = mergedSettings.customizations // {
+            vscode =
+              mergedSettings.customizations.vscode
+              // {
+                extensions = filteredExtensions;
+              }
+              // lib.optionalAttrs (cfg.networkMode == "host") {
+                settings = mergedSettings.customizations.vscode.settings or { } // {
+                  "remote.autoForwardPorts" = false;
+                };
+              };
           };
+        }
+        // lib.optionalAttrs (lib.elem "mkhl.direnv" allExtensions) {
+          postCreateCommand = "direnv allow";
         };
-      } // lib.optionalAttrs (lib.elem "mkhl.direnv" allExtensions) {
-        postCreateCommand = "direnv allow";
-      };
     in
     finalSettings;
   file = settingsFormat.generate "devcontainer.json" devcontainerSettings;
@@ -131,6 +160,7 @@ in
           "podman"
           "vscode"
           "gpg-agent"
+          "netrc"
         ]
       );
       default = [ ];
