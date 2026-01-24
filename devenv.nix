@@ -23,17 +23,14 @@ let
       { };
   netrcSettings =
     if (lib.elem "netrc" cfg.tweaks) then
-      {
-        containerEnv = (cfg.settings.containerEnv or { }) // {
-          NETRC = "/tmp/.netrc";
-        };
-        onCreateCommand =
-          let
-            netrcCommand = "mkdir -p /home/vscode/.config/nix && echo 'extra-sandbox-paths = /tmp/.netrc' > /home/vscode/.config/nix/nix.conf && cat /etc/nix/netrc > /tmp/.netrc";
-            existingCommand = cfg.settings.onCreateCommand or "";
-          in
-          if existingCommand != "" then "${existingCommand} && ${netrcCommand}" else netrcCommand;
-      }
+      (
+        assert lib.assertMsg (cfg.netrc != null) "devcontainer.netrc must be set when using 'netrc' tweak";
+        {
+          mounts = (cfg.settings.mounts or [ ]) ++ [
+            "source=${cfg.netrc},target=/home/vscode/.netrc,type=bind,readonly"
+          ];
+        }
+      )
     else
       { };
   podmanSettings =
@@ -177,6 +174,15 @@ in
         Network mode for the container.
         - "bridge": Use default network mode
         - "host": Use host networking (shares the host's network namespace)
+      '';
+    };
+
+    netrc = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Path to the .netrc file to mount into the container at /home/vscode/.netrc.
+        Required when using the 'netrc' tweak.
       '';
     };
 
