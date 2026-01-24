@@ -8,84 +8,114 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
-  gpgAgentSettings =
-    if (lib.elem "gpg-agent" cfg.tweaks) then
-      {
-        mounts = (cfg.settings.mounts or [ ]) ++ [
+  
+  # Compute final settings with tweaks applied
+  computedSettings =
+    let
+      # Start with base settings
+      baseSettings = cfg.settings;
+      
+      # Apply GPG agent tweak
+      gpgSettings = lib.optionalAttrs (lib.elem "gpg-agent" cfg.tweaks) {
+        mounts = [
           "source=\${localEnv:XDG_RUNTIME_DIR}/gnupg/S.gpg-agent,target=/run/host-gpg-agent,type=bind,readonly"
         ];
-        remoteEnv = (cfg.settings.remoteEnv or { }) // {
-          GPG_TTY = "/dev/pts/0";
-        };
+        remoteEnv.GPG_TTY = "/dev/pts/0";
         postStartCommand = "mkdir -p /home/vscode/.gnupg && rm -f /home/vscode/.gnupg/S.gpg-agent && ln -s /run/host-gpg-agent /home/vscode/.gnupg/S.gpg-agent";
-      }
-    else
-      { };
-  netrcSettings =
-    if (lib.elem "netrc" cfg.tweaks) then
-      (
+      };
+      
+      # Apply netrc tweak
+      netrcSettings = lib.optionalAttrs (lib.elem "netrc" cfg.tweaks) (
         assert lib.assertMsg (cfg.netrc != null) "devcontainer.netrc must be set when using 'netrc' tweak";
         {
-          mounts = (cfg.settings.mounts or [ ]) ++ [
+          mounts = [
             "source=${cfg.netrc},target=/home/vscode/.netrc,type=bind,readonly"
           ];
+          onCreateCommand = "mkdir -p /home/vscode/.config/nix && echo 'extra-sandbox-paths = /tmp/.netrc' > /home/vscode/.config/nix/nix.conf && cat /home/vscode/.netrc > /tmp/.netrc";
+          containerEnv.NETRC = "/tmp/.netrc";
         }
-      )
-    else
-      { };
-  podmanSettings =
-    if (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) then
-      {
+      );
+      
+      # Apply podman/rootless tweaks
+      podmanSettings = lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) {
         containerUser = "vscode";
-        containerEnv = (cfg.settings.containerEnv or { }) // {
-          HOME = "/home/vscode";
-        };
-        runArgs =
-          (cfg.settings.runArgs or [ ])
-          ++ [
-            "--userns=keep-id"
-          ]
-          ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
-      }
-    else
-      {
-        runArgs =
-          (cfg.settings.runArgs or [ ])
-          ++ lib.optionals (cfg.networkMode == "host") [ "--network=host" ];
+        containerEnv.HOME = "/home/vscode";
+        runArgs = [ "--userns=keep-id" ];
       };
+      
+      # Apply host network mode
+      hostNetworkSettings = lib.optionalAttrs (cfg.networkMode == "host") {
+        runArgs = [ "--network=host" ];
+      };
+      
+      # Merge all settings with proper list concatenation and attrset merging
+      mergedSettings = lib.recursiveUpdate baseSettings (
+        lib.recursiveUpdate (
+          lib.recursiveUpdate (
+            lib.recursiveUpdate gpgSettings netrcSettings
+          ) podmanSettings
+        ) hostNetworkSettings
+      );
+      
+      # Special handling for lists - concatenate instead of replace
+      finalMounts = (baseSettings.mounts or [])
+        ++ (gpgSettings.mounts or [])
+        ++ (netrcSettings.mounts or []);
+        
+      finalRunArgs = (baseSettings.runArgs or [])
+        ++ (podmanSettings.runArgs or [])
+        ++ (hostNetworkSettings.runArgs or []);
+        
+      finalContainerEnv = (baseSettings.containerEnv or {})
+        // (podmanSettings.containerEnv or {})
+        // (netrcSettings.containerEnv or {});
+        
+      finalRemoteEnv = (baseSettings.remoteEnv or {})
+        // (gpgSettings.remoteEnv or {});
+        
+      finalOnCreateCommand = netrcSettings.onCreateCommand or baseSettings.onCreateCommand or null;
+        
+    in
+      mergedSettings // {
+        mounts = finalMounts;
+        runArgs = finalRunArgs;
+        containerEnv = finalContainerEnv;
+        remoteEnv = finalRemoteEnv;
+      } // lib.optionalAttrs (finalOnCreateCommand != null) {
+        onCreateCommand = finalOnCreateCommand;
+      };
+
   devcontainerSettings =
     let
-      # First, merge the base settings with podman, gpg-agent, and netrc settings
-      mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate cfg.settings podmanSettings) gpgAgentSettings) netrcSettings;
-
       # Get the default extensions and user extensions
       defaultExtensions = [
         "mkhl.direnv"
         "bbenoist.Nix"
       ];
-      userExtensions = mergedSettings.customizations.vscode.extensions or [ ];
+      userExtensions = computedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions, then remove vscodevim.vim
       allExtensions = lib.unique (defaultExtensions ++ userExtensions);
       filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
 
       # Then apply customizations that need special handling
       finalSettings =
-        mergedSettings
+        computedSettings
         // {
-          customizations = mergedSettings.customizations // {
+          customizations = computedSettings.customizations // {
             vscode =
-              mergedSettings.customizations.vscode
+              computedSettings.customizations.vscode
               // {
                 extensions = filteredExtensions;
               }
               // lib.optionalAttrs (cfg.networkMode == "host") {
-                settings = mergedSettings.customizations.vscode.settings or { } // {
+                settings = computedSettings.customizations.vscode.settings or { } // {
                   "remote.autoForwardPorts" = false;
                 };
               };
           };
         }
-        // lib.optionalAttrs (lib.elem "mkhl.direnv" allExtensions) {
+        # Only set postCreateCommand if not already explicitly set by user
+        // lib.optionalAttrs (!(computedSettings ? postCreateCommand) || computedSettings.postCreateCommand == "direnv allow") {
           postCreateCommand = "direnv allow";
         };
     in
@@ -211,6 +241,62 @@ in
           default = "devenv shell -- echo Ready.";
           description = ''
             A command to run after the container is created.
+          '';
+        };
+
+        options.mounts = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = ''
+            List of mount specifications for the container.
+          '';
+        };
+
+        options.containerEnv = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = { };
+          description = ''
+            Environment variables to set in the container.
+          '';
+        };
+
+        options.runArgs = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = ''
+            Additional arguments to pass to the container runtime.
+          '';
+        };
+
+        options.remoteEnv = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = { };
+          description = ''
+            Environment variables to set in the remote environment.
+          '';
+        };
+
+        options.postStartCommand = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            Command to run after the container starts.
+          '';
+        };
+
+        options.onCreateCommand = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            Command to run when the container is created.
+          '';
+        };
+
+        options.postCreateCommand = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = "direnv allow";
+          description = ''
+            Command to run after the container is created.
           '';
         };
 
