@@ -73,7 +73,7 @@ let
       finalRemoteEnv = (baseSettings.remoteEnv or {})
         // (gpgSettings.remoteEnv or {});
         
-      finalOnCreateCommand = netrcSettings.onCreateCommand or baseSettings.onCreateCommand or null;
+      finalOnCreateCommand = netrcSettings.onCreateCommand or baseSettings.onCreateCommand or "";
         
     in
       mergedSettings // {
@@ -81,7 +81,6 @@ let
         runArgs = finalRunArgs;
         containerEnv = finalContainerEnv;
         remoteEnv = finalRemoteEnv;
-      } // lib.optionalAttrs (finalOnCreateCommand != null) {
         onCreateCommand = finalOnCreateCommand;
       };
 
