@@ -8,7 +8,7 @@
     ];
     devcontainer.networkMode = "host";
     devcontainer.settings.customizations.vscode.extensions = [
-      "jnoortheen.nix-ide",
+      "jnoortheen.nix-ide"
       "GitHub.copilot"
       "GitHub.copilot-chat"
       "mkhl.direnv"
