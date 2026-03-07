@@ -8,13 +8,13 @@
 let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
-  
+
   # Compute final settings with tweaks applied
   computedSettings =
     let
       # Start with base settings
       baseSettings = cfg.settings;
-      
+
       # Apply GPG agent tweak
       gpgSettings = lib.optionalAttrs (lib.elem "gpg-agent" cfg.tweaks) {
         mounts = [
@@ -23,7 +23,7 @@ let
         remoteEnv.GPG_TTY = "/dev/pts/0";
         postStartCommand = "mkdir -p /home/vscode/.gnupg && rm -f /home/vscode/.gnupg/S.gpg-agent && ln -s /run/host-gpg-agent /home/vscode/.gnupg/S.gpg-agent";
       };
-      
+
       # Apply netrc tweak
       netrcSettings = lib.optionalAttrs (lib.elem "netrc" cfg.tweaks) (
         assert lib.assertMsg (cfg.netrc != null) "devcontainer.netrc must be set when using 'netrc' tweak";
@@ -35,26 +35,26 @@ let
           containerEnv.NETRC = "/tmp/.netrc";
         }
       );
-      
+
       # Apply pass tweak
       passSettings = lib.optionalAttrs (lib.elem "pass" cfg.tweaks) {
         mounts = [
           "source=\${localEnv:HOME}/.password-store,target=/home/vscode/.password-store,type=bind,readonly"
         ];
       };
-      
+
       # Apply podman/rootless tweaks
       podmanSettings = lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) {
         containerUser = "vscode";
         containerEnv.HOME = "/home/vscode";
         runArgs = [ "--userns=keep-id" ];
       };
-      
+
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.networkMode == "host") {
         runArgs = [ "--network=host" ];
       };
-      
+
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
         lib.recursiveUpdate (
@@ -65,26 +65,26 @@ let
           ) podmanSettings
         ) hostNetworkSettings
       );
-      
+
       # Special handling for lists - concatenate instead of replace
       finalMounts = (baseSettings.mounts or [])
         ++ (gpgSettings.mounts or [])
         ++ (netrcSettings.mounts or [])
         ++ (passSettings.mounts or []);
-        
+
       finalRunArgs = (baseSettings.runArgs or [])
         ++ (podmanSettings.runArgs or [])
         ++ (hostNetworkSettings.runArgs or []);
-        
+
       finalContainerEnv = (baseSettings.containerEnv or {})
         // (podmanSettings.containerEnv or {})
         // (netrcSettings.containerEnv or {});
-        
+
       finalRemoteEnv = (baseSettings.remoteEnv or {})
         // (gpgSettings.remoteEnv or {});
-        
+
       finalOnCreateCommand = netrcSettings.onCreateCommand or (if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then baseSettings.onCreateCommand else "");
-        
+
     in
       (lib.removeAttrs mergedSettings [ "onCreateCommand" ]) // {
         mounts = finalMounts;
@@ -100,8 +100,7 @@ let
     let
       # Get the default extensions and user extensions
       defaultExtensions = [
-        "mkhl.direnv"
-        "bbenoist.Nix"
+        "jnoortheen.nix-ide"
       ];
       userExtensions = computedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions, then remove vscodevim.vim
@@ -124,10 +123,6 @@ let
                 };
               };
           };
-        }
-        # Only set postCreateCommand if not already explicitly set by user
-        // lib.optionalAttrs (!(computedSettings ? postCreateCommand) || computedSettings.postCreateCommand == "direnv allow") {
-          postCreateCommand = "direnv allow";
         };
     in
     finalSettings;
@@ -306,7 +301,7 @@ in
 
         options.postCreateCommand = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
-          default = "direnv allow";
+          default = null;
           description = ''
             Command to run after the container is created.
           '';
@@ -315,8 +310,7 @@ in
         options.customizations.vscode.extensions = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [
-            "mkhl.direnv"
-            "bbenoist.Nix"
+            "jnoortheen.nix-ide"
           ];
           description = ''
             A list of pre-installed VS Code extensions.

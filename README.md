@@ -82,10 +82,8 @@ allowUnfree: true
     devcontainer.tweaks = [ "podman" "vscode" "gpg-agent" ];
     devcontainer.networkMode = "host";
     devcontainer.settings.customizations.vscode.extensions = [
-      "bbenoist.Nix"
       "GitHub.copilot"
       "GitHub.copilot-chat"
-      "mkhl.direnv"
       "vscodevim.vim"
     ];
   };
