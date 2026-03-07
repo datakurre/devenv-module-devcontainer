@@ -36,6 +36,13 @@ let
         }
       );
       
+      # Apply pass tweak
+      passSettings = lib.optionalAttrs (lib.elem "pass" cfg.tweaks) {
+        mounts = [
+          "source=\${localEnv:HOME}/.password-store,target=/home/vscode/.password-store,type=bind,readonly"
+        ];
+      };
+      
       # Apply podman/rootless tweaks
       podmanSettings = lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) {
         containerUser = "vscode";
@@ -52,7 +59,9 @@ let
       mergedSettings = lib.recursiveUpdate baseSettings (
         lib.recursiveUpdate (
           lib.recursiveUpdate (
-            lib.recursiveUpdate gpgSettings netrcSettings
+            lib.recursiveUpdate (
+              lib.recursiveUpdate gpgSettings netrcSettings
+            ) passSettings
           ) podmanSettings
         ) hostNetworkSettings
       );
@@ -60,7 +69,8 @@ let
       # Special handling for lists - concatenate instead of replace
       finalMounts = (baseSettings.mounts or [])
         ++ (gpgSettings.mounts or [])
-        ++ (netrcSettings.mounts or []);
+        ++ (netrcSettings.mounts or [])
+        ++ (passSettings.mounts or []);
         
       finalRunArgs = (baseSettings.runArgs or [])
         ++ (podmanSettings.runArgs or [])
@@ -189,6 +199,7 @@ in
           "vscode"
           "gpg-agent"
           "netrc"
+          "pass"
         ]
       );
       default = [ ];

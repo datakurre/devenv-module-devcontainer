@@ -116,7 +116,7 @@ devenv shell
 | Option | Values | Description |
 |--------|--------|-------------|
 | `enable` | `true`, `false` | Enable `.devcontainer.json` generation |
-| `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option) |
+| `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc`, `pass` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option); `pass`: mounts `$HOME/.password-store` into container |
 | `networkMode` | `bridge`, `host` | `host` shares the host network namespace |
 | `netrc` | path | Path to `.netrc` file to mount. Required when using the `netrc` tweak |
 | `settings` | any | Pass-through to `devcontainer.json` |
