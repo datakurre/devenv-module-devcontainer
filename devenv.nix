@@ -128,9 +128,7 @@ let
   devcontainerSettings =
     let
       # Get the default extensions and user extensions
-      defaultExtensions = [
-        "jnoortheen.nix-ide"
-      ];
+      defaultExtensions = [];
       userExtensions = computedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions + vsix container paths, then remove vscodevim.vim
       allExtensions = lib.unique (defaultExtensions ++ userExtensions ++ vsixContainerPaths);
