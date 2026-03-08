@@ -9,6 +9,27 @@ let
   cfg = config.devcontainer;
   settingsFormat = pkgs.formats.json { };
 
+  # Fetch each vsix into the Nix store at build time
+  vsixFetched = map
+    (entry:
+      let
+        url = if builtins.isAttrs entry then entry.url else entry;
+        sha256 = if builtins.isAttrs entry && entry ? sha256 then entry.sha256 else null;
+        fetched = if sha256 != null
+          then builtins.fetchurl { inherit url sha256; }
+          else builtins.fetchurl url;
+        filename = lib.last (lib.splitString "/" url);
+      in {
+        storePath = fetched;
+        containerPath = "/run/host-vsix/${filename}";
+        mount = "source=${fetched},target=/run/host-vsix/${filename},type=bind,readonly";
+      }
+    )
+    cfg.vsix;
+
+  vsixMounts = map (e: e.mount) vsixFetched;
+  vsixContainerPaths = map (e: e.containerPath) vsixFetched;
+
   # Compute final settings with tweaks applied
   computedSettings =
     let
@@ -70,7 +91,8 @@ let
       finalMounts = (baseSettings.mounts or [])
         ++ (gpgSettings.mounts or [])
         ++ (netrcSettings.mounts or [])
-        ++ (passSettings.mounts or []);
+        ++ (passSettings.mounts or [])
+        ++ vsixMounts;
 
       finalRunArgs = (baseSettings.runArgs or [])
         ++ (podmanSettings.runArgs or [])
@@ -86,7 +108,14 @@ let
       finalOnCreateCommand = netrcSettings.onCreateCommand or (if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then baseSettings.onCreateCommand else "");
 
     in
-      (lib.removeAttrs mergedSettings [ "onCreateCommand" ]) // {
+      (lib.removeAttrs mergedSettings [ "onCreateCommand" "postCreateCommand" "postStartCommand" ])
+      // lib.optionalAttrs (mergedSettings.postStartCommand or null != null) {
+        postStartCommand = mergedSettings.postStartCommand;
+      }
+      // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
+        postCreateCommand = mergedSettings.postCreateCommand;
+      }
+      // {
         mounts = finalMounts;
         runArgs = finalRunArgs;
         containerEnv = finalContainerEnv;
@@ -103,8 +132,8 @@ let
         "jnoortheen.nix-ide"
       ];
       userExtensions = computedSettings.customizations.vscode.extensions or [ ];
-      # Merge extensions: defaults + user extensions, then remove vscodevim.vim
-      allExtensions = lib.unique (defaultExtensions ++ userExtensions);
+      # Merge extensions: defaults + user extensions + vsix container paths, then remove vscodevim.vim
+      allExtensions = lib.unique (defaultExtensions ++ userExtensions ++ vsixContainerPaths);
       filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
 
       # Then apply customizations that need special handling
@@ -199,6 +228,19 @@ in
       );
       default = [ ];
       description = "List of tweaks to apply to the devcontainer configuration.";
+    };
+
+    vsix = lib.mkOption {
+      type = lib.types.listOf (lib.types.either lib.types.str (lib.types.submodule {
+        options.url = lib.mkOption { type = lib.types.str; };
+        options.sha256 = lib.mkOption { type = lib.types.str; default = ""; };
+      }));
+      default = [ ];
+      description = ''
+        List of .vsix extension files to fetch into the Nix store at build time
+        and install into VS Code. Each entry can be a URL string or an attrset
+        with "url" and "sha256" attributes.
+      '';
     };
 
     networkMode = lib.mkOption {
