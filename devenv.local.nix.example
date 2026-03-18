@@ -8,10 +8,10 @@
     ];
     devcontainer.networkMode = "host";
     devcontainer.settings.customizations.vscode.extensions = [
-      "jnoortheen.nix-ide"
       "GitHub.copilot"
       "GitHub.copilot-chat"
-      "mkhl.direnv"
+      "datakurre.devenv"
+      "jnoortheen.nix-ide"
       "vscodevim.vim"
     ];
   };

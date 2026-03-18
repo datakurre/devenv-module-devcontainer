@@ -80,8 +80,8 @@ allowUnfree: true
   profiles.devcontainer.module = {
     devcontainer.enable = true;
     devcontainer.tweaks = [ "podman" "vscode" "gpg-agent" ];
-    devcontainer.networkMode = "host";
     devcontainer.settings.customizations.vscode.extensions = [
+      "datakurre.devenv"
       "GitHub.copilot"
       "GitHub.copilot-chat"
       "vscodevim.vim"
