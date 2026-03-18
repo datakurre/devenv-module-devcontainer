@@ -6,12 +6,12 @@
   ...
 }:
 let
-  pkgs_ = import inputs.nixpkgs-devcontainer {
+  pkgs-devcontainer = import inputs.devenv-module-devcontainer-nixpkgs {
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = true;
   };
   cfg = config.devcontainer;
-  settingsFormat = pkgs_.formats.json { };
+  settingsFormat = pkgs-devcontainer.formats.json { };
 
   # Fetch each vsix into the Nix store at build time
   vsixFetched = map
@@ -166,10 +166,10 @@ let
     ;
   podmanSetupScript =
     let
-      policyConf = pkgs_.writeText "policy.conf" ''
+      policyConf = pkgs-devcontainer.writeText "policy.conf" ''
         {"default":[{"type":"insecureAcceptAnything"}],"transports":{"default-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}
       '';
-      registriesConf = pkgs_.writeText "registries.conf" ''
+      registriesConf = pkgs-devcontainer.writeText "registries.conf" ''
         [registries]
         [registries.block]
         registries = []
@@ -178,20 +178,20 @@ let
         [registries.search]
         registries = ["default.io", "quay.io"]
       '';
-      storageConf = pkgs_.writeText "storage.conf" ''
+      storageConf = pkgs-devcontainer.writeText "storage.conf" ''
         [storage]
         driver = "overlay"
       '';
-      containersConf = pkgs_.writeText "containers.conf" ''
+      containersConf = pkgs-devcontainer.writeText "containers.conf" ''
         [engine]
-        helper_binaries_dir = ["${pkgs_.podman}/libexec/podman","${pkgs_.crun}/bin","${pkgs_.fuse-overlayfs}/bin"]
+        helper_binaries_dir = ["${pkgs-devcontainer.podman}/libexec/podman","${pkgs-devcontainer.crun}/bin","${pkgs-devcontainer.fuse-overlayfs}/bin"]
         runtime = "crun"
         [containers]
         pids_limit = 0
       '';
     in
-    pkgs_.writeScript "podman-setup" ''
-      #!${pkgs_.runtimeShell}
+    pkgs-devcontainer.writeScript "podman-setup" ''
+      #!${pkgs-devcontainer.runtimeShell}
       if ! test -f ~/.config/containers/policy.json; then
         install -Dm755 ${policyConf} ~/.config/containers/policy.json
       fi
@@ -204,8 +204,8 @@ let
       install -Dm755 ${containersConf} ~/.config/containers/containers.conf
       if command -v "systemctl" >/dev/null 2>&1; then
         mkdir -p ~/.config/systemd/user
-        ln -sf ${pkgs_.podman}/share/systemd/user/podman.socket ~/.config/systemd/user/podman.socket
-        ln -sf ${pkgs_.podman}/share/systemd/user/podman.service ~/.config/systemd/user/podman.service
+        ln -sf ${pkgs-devcontainer.podman}/share/systemd/user/podman.socket ~/.config/systemd/user/podman.socket
+        ln -sf ${pkgs-devcontainer.podman}/share/systemd/user/podman.service ~/.config/systemd/user/podman.service
         systemctl --user start podman.socket
       fi
     '';
@@ -374,24 +374,24 @@ in
     packages =
       [ ]
       ++ (optionals (lib.elem "vscode" cfg.tweaks) [
-        (pkgs_.vscode-with-extensions.override {
-          vscode = pkgs_.vscode;
+        (pkgs-devcontainer.vscode-with-extensions.override {
+          vscode = pkgs-devcontainer.vscode;
           vscodeExtensions =
             [
-              pkgs_.vscode-extensions.ms-vscode-remote.remote-containers
+              pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
             ]
             ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
-              pkgs_.vscode-extensions.vscodevim.vim
+              pkgs-devcontainer.vscode-extensions.vscodevim.vim
             ];
         })
       ])
       ++ (optionals (lib.elem "podman" cfg.tweaks) [
-        pkgs_.podman
-        pkgs_.crun
-        pkgs_.conmon
-        pkgs_.skopeo
-        pkgs_.slirp4netns
-        pkgs_.fuse-overlayfs
+        pkgs-devcontainer.podman
+        pkgs-devcontainer.crun
+        pkgs-devcontainer.conmon
+        pkgs-devcontainer.skopeo
+        pkgs-devcontainer.slirp4netns
+        pkgs-devcontainer.fuse-overlayfs
       ]);
     enterShell =
       ''

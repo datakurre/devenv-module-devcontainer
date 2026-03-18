@@ -6,7 +6,6 @@
       "podman"
       "vscode"
     ];
-    devcontainer.networkMode = "host";
     devcontainer.settings.customizations.vscode.extensions = [
       "GitHub.copilot"
       "GitHub.copilot-chat"

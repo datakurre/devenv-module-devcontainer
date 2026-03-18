@@ -68,9 +68,10 @@ inputs:
   devenv-module-devcontainer:
     url: github:datakurre/devenv-module-devcontainer
     flake: false
+  devenv-module-devcontainer-nixpkgs:
+    url: github:nixos/nixpkgs
 imports:
   - devenv-module-devcontainer
-allowUnfree: true
 ```
 
 **`devenv.local.nix`** — personal devcontainer configuration under `profiles.devcontainer.module`:
@@ -81,9 +82,10 @@ allowUnfree: true
     devcontainer.enable = true;
     devcontainer.tweaks = [ "podman" "vscode" "gpg-agent" ];
     devcontainer.settings.customizations.vscode.extensions = [
-      "datakurre.devenv"
       "GitHub.copilot"
       "GitHub.copilot-chat"
+      "datakurre.devenv"
+      "jnoortheen.nix-ide"
       "vscodevim.vim"
     ];
   };
