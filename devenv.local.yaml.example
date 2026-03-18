@@ -3,6 +3,6 @@ inputs:
     url: github:datakurre/devenv-module-devcontainer
     flake: false
   devenv-module-devcontainer-nixpkgs:
-    url: nixos/nixpkgs
+    url: github:nixos/nixpkgs
 imports:
   - devenv-module-devcontainer
