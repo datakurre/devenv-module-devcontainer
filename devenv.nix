@@ -11,7 +11,7 @@ let
     config.allowUnfree = true;
   };
   cfg = config.devcontainer;
-  settingsFormat = pkgs-devcontainer.formats.json { };
+  settingsFormat = pkgs.formats.json { };
 
   # Fetch each vsix into the Nix store at build time
   vsixFetched = map
@@ -166,10 +166,10 @@ let
     ;
   podmanSetupScript =
     let
-      policyConf = pkgs-devcontainer.writeText "policy.conf" ''
+      policyConf = pkgs.writeText "policy.conf" ''
         {"default":[{"type":"insecureAcceptAnything"}],"transports":{"default-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}
       '';
-      registriesConf = pkgs-devcontainer.writeText "registries.conf" ''
+      registriesConf = pkgs.writeText "registries.conf" ''
         [registries]
         [registries.block]
         registries = []
@@ -178,20 +178,20 @@ let
         [registries.search]
         registries = ["default.io", "quay.io"]
       '';
-      storageConf = pkgs-devcontainer.writeText "storage.conf" ''
+      storageConf = pkgs.writeText "storage.conf" ''
         [storage]
         driver = "overlay"
       '';
-      containersConf = pkgs-devcontainer.writeText "containers.conf" ''
+      containersConf = pkgs.writeText "containers.conf" ''
         [engine]
-        helper_binaries_dir = ["${pkgs-devcontainer.podman}/libexec/podman","${pkgs-devcontainer.crun}/bin","${pkgs-devcontainer.fuse-overlayfs}/bin"]
+        helper_binaries_dir = ["${pkgs.podman}/libexec/podman","${pkgs.crun}/bin","${pkgs.fuse-overlayfs}/bin"]
         runtime = "crun"
         [containers]
         pids_limit = 0
       '';
     in
-    pkgs-devcontainer.writeScript "podman-setup" ''
-      #!${pkgs-devcontainer.runtimeShell}
+    pkgs.writeScript "podman-setup" ''
+      #!${pkgs.runtimeShell}
       if ! test -f ~/.config/containers/policy.json; then
         install -Dm755 ${policyConf} ~/.config/containers/policy.json
       fi
@@ -204,8 +204,8 @@ let
       install -Dm755 ${containersConf} ~/.config/containers/containers.conf
       if command -v "systemctl" >/dev/null 2>&1; then
         mkdir -p ~/.config/systemd/user
-        ln -sf ${pkgs-devcontainer.podman}/share/systemd/user/podman.socket ~/.config/systemd/user/podman.socket
-        ln -sf ${pkgs-devcontainer.podman}/share/systemd/user/podman.service ~/.config/systemd/user/podman.service
+        ln -sf ${pkgs.podman}/share/systemd/user/podman.socket ~/.config/systemd/user/podman.socket
+        ln -sf ${pkgs.podman}/share/systemd/user/podman.service ~/.config/systemd/user/podman.service
         systemctl --user start podman.socket
       fi
     '';
@@ -386,12 +386,12 @@ in
         })
       ])
       ++ (optionals (lib.elem "podman" cfg.tweaks) [
-        pkgs-devcontainer.podman
-        pkgs-devcontainer.crun
-        pkgs-devcontainer.conmon
-        pkgs-devcontainer.skopeo
-        pkgs-devcontainer.slirp4netns
-        pkgs-devcontainer.fuse-overlayfs
+        pkgs.podman
+        pkgs.crun
+        pkgs.conmon
+        pkgs.skopeo
+        pkgs.slirp4netns
+        pkgs.fuse-overlayfs
       ]);
     enterShell =
       ''
