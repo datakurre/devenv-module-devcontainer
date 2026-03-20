@@ -1,0 +1,9 @@
+{
+  "image": "ghcr.io/cachix/devenv/devcontainer:latest",
+  "overrideCommand": false,
+  "runArgs": ["--cap-add=NET_ADMIN"],
+  "mounts": [
+    "source=${localWorkspaceFolder}/firewall-setup.sh,target=/run/devcontainer-firewall,type=bind,readonly"
+  ],
+  "postStartCommand": "sudo /run/devcontainer-firewall"
+}

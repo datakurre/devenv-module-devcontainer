@@ -116,10 +116,186 @@ devenv shell
 | Option | Values | Description |
 |--------|--------|-------------|
 | `enable` | `true`, `false` | Enable `.devcontainer.json` generation |
-| `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc`, `pass` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option); `pass`: mounts `$HOME/.password-store` into container |
-| `networkMode` | `bridge`, `host` | `host` shares the host network namespace |
+| `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc`, `pass`, `cli` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option); `pass`: mounts `$HOME/.password-store` into container; `cli`: installs the devcontainer CLI (`@devcontainers/cli`) on the host shell |
+| `networkMode` | `bridge`, `host`, `none` | `host` shares the host network namespace; `none` disables all networking (complete isolation) |
+| `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via iptables/ip6tables. Requires `networkMode = "bridge"`. Loopback and DNS are always allowed. |
+| `network.dev` | `true`, `false` | Dev mode for the firewall. When `true`, passwordless sudo is **not** removed after firewall setup (so rules can be tweaked manually), and the firewall script respects the `EXTRA_ALLOWED_HOSTS` env var for runtime host additions without a Nix rebuild. Only meaningful when `allowedHosts` is non-empty. |
 | `netrc` | path | Path to `.netrc` file to mount. Required when using the `netrc` tweak |
 | `settings` | any | Pass-through to `devcontainer.json` |
+
+## Network sandboxing
+
+This module is often used in multi-project environments where different projects (or the same project at different stages) need different sandbox levels — in particular to control what LLM coding agents can reach from inside the container.
+
+Two independent controls are provided:
+
+| Goal | Setting |
+|------|---------|
+| Restrict outbound to a specific allowlist | `network.allowedHosts` |
+| Block all networking completely | `networkMode = "none"` |
+
+### `network.allowedHosts` — outbound allowlist
+
+When `allowedHosts` is non-empty the module:
+
+1. Generates a shell script (stored in the Nix store) that programs `iptables`/`ip6tables` OUTPUT rules.
+2. Bind-mounts the script into the container at `/run/devcontainer-firewall`.
+3. Adds `--cap-add=NET_ADMIN` to `runArgs` so the container can modify its own network namespace.
+4. Calls `sudo /run/devcontainer-firewall` from `postStartCommand` so the rules are applied at every container start.
+
+The default OUTPUT policy is **DROP**. The following are always permitted regardless of the list:
+
+- Loopback (`lo` interface)
+- DNS queries (UDP/TCP port 53) so hostname resolution keeps working
+- Already-established / related connections
+
+Each entry in `allowedHosts` can be:
+- a **hostname** (e.g. `"github.com"`) — resolved via `getent` at container start; all returned IPs are individually allowed
+- a bare **IP address** (e.g. `"192.168.1.10"`)
+- a **CIDR range** (e.g. `"10.0.0.0/8"`, `"2001:db8::/32"`)
+
+IPv4 and IPv6 are handled separately. If `iptables` or `ip6tables` is absent in the container image, the firewall script automatically re-executes itself inside `nix shell nixpkgs#iptables` to obtain them.
+
+`allowedHosts` requires `networkMode = "bridge"` (the default); combining it with `"host"` or `"none"` is caught at eval time with a clear error.
+
+### Security hardening: sudo removal
+
+After applying the firewall rules the script removes `/etc/sudoers.d/vscode`, revoking the container user's passwordless `sudo`. Without this the user could trivially flush the rules (`sudo iptables -F OUTPUT`). With it removed:
+
+- The user cannot call `iptables` directly (requires `CAP_NET_ADMIN`, which is only available to root)
+- The user cannot escalate to root (no `sudo` or `su` without a password)
+- The firewall rules persist for the container's lifetime
+
+To keep `sudo` available during development (e.g. to tweak the allowlist without a full rebuild), set `network.dev = true`.
+
+### Dev mode (`network.dev`)
+
+When iterating on which hosts to allow, a full `devenv shell` rebuild on every change is slow. Dev mode avoids this:
+
+```nix
+devcontainer.network.allowedHosts = [ "github.com" ];
+devcontainer.network.dev = true;  # ← flip while iterating, remove before committing
+```
+
+With dev mode on:
+- Passwordless sudo is kept after firewall setup
+- The firewall script respects `EXTRA_ALLOWED_HOSTS` so you can re-run it with additional hosts at runtime:
+
+```bash
+# Inside the container — add hosts without rebuilding:
+EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
+```
+
+### `networkMode = "none"` — complete isolation
+
+Sets `--network=none` on the container. No network interfaces are created at all. Use this for the strictest possible sandbox where no network access is needed.
+
+### Per-project and per-developer flexibility
+
+Because `devenv.local.nix` is gitignored, each developer can choose their own sandbox level independently of the project default. A typical pattern:
+
+**Project `devenv.nix`** (committed) — defines a recommended allowlist under the devcontainer profile:
+
+```nix
+{
+  profiles.devcontainer.module = {
+    devcontainer.enable = true;
+    devcontainer.tweaks = [ "podman" "vscode" "cli" ];
+    devcontainer.network.allowedHosts = [
+      "api.openai.com"        # LLM API
+      "cache.nixos.org"       # Nix binary cache
+      "github.com"            # source control
+    ];
+    devcontainer.settings.customizations.vscode.extensions = [
+      "GitHub.copilot"
+      "GitHub.copilot-chat"
+      "jnoortheen.nix-ide"
+    ];
+  };
+}
+```
+
+**Developer `devenv.local.nix`** (gitignored) — a developer who needs stricter isolation overrides the list (or uses `none`):
+
+```nix
+{
+  profiles.devcontainer.module = {
+    devcontainer.enable = true;
+    devcontainer.tweaks = [ "podman" "vscode" "cli" ];
+    # Tighter sandbox: only the Nix cache and GitHub, no LLM API
+    devcontainer.network.allowedHosts = [
+      "cache.nixos.org"
+      "github.com"
+    ];
+  };
+}
+```
+
+Or a developer doing offline-only work:
+
+```nix
+{
+  profiles.devcontainer.module = {
+    devcontainer.enable = true;
+    devcontainer.tweaks = [ "podman" "vscode" ];
+    devcontainer.networkMode = "none";
+  };
+}
+```
+
+## Testing network sandboxing
+
+### Prerequisites
+
+- The `cli` tweak must be active so the `devcontainer` CLI is on PATH.
+- `podman` or `docker` must be available.
+
+```nix
+devcontainer.tweaks = [ "podman" "vscode" "cli" ];
+```
+
+Re-enter the devcontainer shell after changing tweaks:
+
+```bash
+devenv shell --profile=devcontainer
+```
+
+### Running the test suite
+
+```bash
+./tests/test-allowed-hosts.sh          # run all checks, remove container on exit
+./tests/test-allowed-hosts.sh --keep   # keep container running for manual inspection
+./tests/test-allowed-hosts.sh --dev    # dev mode: skip sudo-removal tests, pass FIREWALL_DEV=1
+./tests/test-allowed-hosts.sh --dev --keep
+```
+
+The test suite spins up the fixture at [tests/fixtures/allowed-hosts/](tests/fixtures/allowed-hosts) — a plain devcontainer that allows outbound traffic to `github.com` only — and verifies the following:
+
+| Check | Expected |
+|-------|----------|
+| Loopback 127.0.0.1 reachable (iptables ACCEPT rule present) | pass |
+| DNS: `getent hosts github.com` | pass — DNS port 53 always allowed |
+| DNS: `getent hosts google.com` | pass — DNS resolution works even for blocked hosts |
+| `curl https://github.com` | pass — explicitly in allowlist |
+| `curl https://www.google.com` | **fail** — not in allowlist |
+| `curl https://example.com` | **fail** — not in allowlist |
+| `nc 1.1.1.1 443` (direct IP) | **fail** — not in allowlist |
+| `curl https://api.openai.com` | **fail** — not in allowlist |
+| `sudo true` | **fail** — passwordless sudo removed |
+| `iptables -F OUTPUT` (with or without sudo) | **fail** — cannot flush rules |
+
+### Manual inspection
+
+After running with `--keep` (add `--dev` to keep sudo available):
+
+```bash
+# Open a shell in the running fixture container
+devcontainer exec --workspace-folder tests/fixtures/allowed-hosts -- bash
+
+# Inside: view the applied iptables rules (requires --dev flag or nix shell)
+nix shell nixpkgs#iptables -- iptables -L OUTPUT -n --line-numbers
+nix shell nixpkgs#iptables -- ip6tables -L OUTPUT -n --line-numbers
+```
 
 ## License
 
