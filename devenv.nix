@@ -34,6 +34,102 @@ let
   vsixMounts = map (e: e.mount) vsixFetched;
   vsixContainerPaths = map (e: e.containerPath) vsixFetched;
 
+  # Generate iptables/ip6tables allowlist firewall script for network.allowedHosts.
+  # Stored in the Nix store on the host and bind-mounted into the container at
+  # /run/devcontainer-firewall via the mounts list (see computedSettings below).
+  firewallScript =
+    let
+      isCidr = s: builtins.match ".*/.*" s != null;
+      hosts = lib.filter (s: !isCidr s) cfg.network.allowedHosts;
+      cidrs = lib.filter isCidr cfg.network.allowedHosts;
+      hostsStr = lib.concatStringsSep " " hosts;
+      cidrsStr = lib.concatStringsSep " " cidrs;
+    in
+    pkgs.writeScript "devcontainer-firewall" ''
+      #!/bin/sh
+      # Devcontainer outbound network allowlist.
+      # Self-escalate to root; the vscode user has passwordless sudo in devcontainer images.
+      if [ "$(id -u)" != "0" ]; then
+        exec sudo "$0" "$@"
+      fi
+
+      ALLOWED_HOSTS="${hostsStr}"
+      ALLOWED_CIDRS="${cidrsStr}"
+
+      # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
+      #   EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
+      if [ -n "''${EXTRA_ALLOWED_HOSTS:-}" ]; then
+        ALLOWED_HOSTS="$ALLOWED_HOSTS ''${EXTRA_ALLOWED_HOSTS}"
+      fi
+      setup_ipv4() {
+        iptables -F OUTPUT
+        iptables -P OUTPUT DROP
+        iptables -A OUTPUT -o lo -j ACCEPT
+        iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+        iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+        iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        for host in $ALLOWED_HOSTS; do
+          for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+            iptables -A OUTPUT -d "$ip" -j ACCEPT
+            echo "  ipv4 allowed: $host -> $ip"
+          done
+        done
+        for cidr in $ALLOWED_CIDRS; do
+          case "$cidr" in
+            *:*) ;;
+            *) iptables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv4 allowed: CIDR $cidr" ;;
+          esac
+        done
+      }
+
+      setup_ipv6() {
+        ip6tables -F OUTPUT
+        ip6tables -P OUTPUT DROP
+        ip6tables -A OUTPUT -o lo -j ACCEPT
+        ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT
+        ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+        ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        for host in $ALLOWED_HOSTS; do
+          for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+            ip6tables -A OUTPUT -d "$ip" -j ACCEPT
+            echo "  ipv6 allowed: $host -> $ip"
+          done
+        done
+        for cidr in $ALLOWED_CIDRS; do
+          case "$cidr" in
+            *:*) ip6tables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv6 allowed: CIDR $cidr" ;;
+          esac
+        done
+      }
+
+      echo "Applying devcontainer network allowlist..."
+      if command -v iptables >/dev/null 2>&1; then
+        setup_ipv4
+        echo "IPv4 rules applied."
+      else
+        echo "WARNING: iptables not found, IPv4 traffic unrestricted"
+      fi
+      if command -v ip6tables >/dev/null 2>&1; then
+        setup_ipv6
+        echo "IPv6 rules applied."
+      else
+        echo "WARNING: ip6tables not found, IPv6 traffic unrestricted"
+      fi
+      echo "Network allowlist applied."
+
+      # Remove passwordless sudo so the container user cannot modify the rules.
+      # Skipped in dev mode to allow manual rule tweaking.
+      ${lib.optionalString (!cfg.network.dev) ''
+        if [ -f /etc/sudoers.d/vscode ]; then
+          rm -f /etc/sudoers.d/vscode
+          echo "Passwordless sudo removed."
+        fi
+      ''}
+      ${lib.optionalString cfg.network.dev ''
+        echo "Dev mode: passwordless sudo kept. Re-run with EXTRA_ALLOWED_HOSTS to add hosts."
+      ''}
+    '';
+
   # Compute final settings with tweaks applied
   computedSettings =
     let
@@ -80,15 +176,31 @@ let
         runArgs = [ "--network=host" ];
       };
 
+      # Apply network=none mode (complete network isolation)
+      noneNetworkSettings = lib.optionalAttrs (cfg.networkMode == "none") {
+        runArgs = [ "--network=none" ];
+      };
+
+      # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
+      firewallMounts =
+        if cfg.network.allowedHosts != [] && cfg.networkMode != "bridge"
+        then throw "devcontainer.network.allowedHosts requires networkMode = \"bridge\""
+        else lib.optional (cfg.network.allowedHosts != [])
+          "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
+
+      firewallRunArgs = lib.optional (cfg.network.allowedHosts != []) "--cap-add=NET_ADMIN";
+
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
         lib.recursiveUpdate (
           lib.recursiveUpdate (
             lib.recursiveUpdate (
-              lib.recursiveUpdate gpgSettings netrcSettings
-            ) passSettings
-          ) podmanSettings
-        ) hostNetworkSettings
+              lib.recursiveUpdate (
+                lib.recursiveUpdate gpgSettings netrcSettings
+              ) passSettings
+            ) podmanSettings
+          ) hostNetworkSettings
+        ) noneNetworkSettings
       );
 
       # Special handling for lists - concatenate instead of replace
@@ -96,11 +208,14 @@ let
         ++ (gpgSettings.mounts or [])
         ++ (netrcSettings.mounts or [])
         ++ (passSettings.mounts or [])
-        ++ vsixMounts;
+        ++ vsixMounts
+        ++ firewallMounts;
 
       finalRunArgs = (baseSettings.runArgs or [])
         ++ (podmanSettings.runArgs or [])
-        ++ (hostNetworkSettings.runArgs or []);
+        ++ (hostNetworkSettings.runArgs or [])
+        ++ (noneNetworkSettings.runArgs or [])
+        ++ firewallRunArgs;
 
       finalContainerEnv = (baseSettings.containerEnv or {})
         // (podmanSettings.containerEnv or {})
@@ -111,10 +226,26 @@ let
 
       finalOnCreateCommand = netrcSettings.onCreateCommand or (if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then baseSettings.onCreateCommand else "");
 
+      # Concatenate all postStartCommand sources: user base, gpg-agent, firewall.
+      # This also fixes the pre-existing issue where gpg-agent would overwrite the
+      # user's own postStartCommand when both were set.
+      finalPostStartCommand =
+        let
+          parts = lib.filter (p: p != null && p != "") [
+            (baseSettings.postStartCommand or null)
+            (gpgSettings.postStartCommand or null)
+          (if cfg.network.allowedHosts != [] then
+            (if cfg.network.dev then "FIREWALL_DEV=1 sudo /run/devcontainer-firewall"
+             else "sudo /run/devcontainer-firewall")
+          else null)
+          ];
+        in
+        if parts != [] then lib.concatStringsSep " && " parts else null;
+
     in
       (lib.removeAttrs mergedSettings [ "onCreateCommand" "postCreateCommand" "postStartCommand" ])
-      // lib.optionalAttrs (mergedSettings.postStartCommand or null != null) {
-        postStartCommand = mergedSettings.postStartCommand;
+      // lib.optionalAttrs (finalPostStartCommand != null) {
+        postStartCommand = finalPostStartCommand;
       }
       // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
         postCreateCommand = mergedSettings.postCreateCommand;
@@ -148,7 +279,7 @@ let
               // {
                 extensions = filteredExtensions;
               }
-              // lib.optionalAttrs (cfg.networkMode == "host") {
+              // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
                 settings = computedSettings.customizations.vscode.settings or { } // {
                   "remote.autoForwardPorts" = false;
                 };
@@ -226,10 +357,11 @@ in
           "gpg-agent"
           "netrc"
           "pass"
+          "cli"
         ]
       );
       default = [ ];
-      description = "List of tweaks to apply to the devcontainer configuration.";
+      description = "List of tweaks to apply to the devcontainer configuration. 'cli': installs the devcontainer CLI (@devcontainers/cli) on the host shell.";
     };
 
     vsix = lib.mkOption {
@@ -249,13 +381,52 @@ in
       type = lib.types.enum [
         "bridge"
         "host"
+        "none"
       ];
       default = "bridge";
       description = ''
         Network mode for the container.
         - "bridge": Use default network mode
         - "host": Use host networking (shares the host's network namespace)
+        - "none": Disable all networking (complete isolation)
       '';
+    };
+
+    network = {
+      allowedHosts = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = ''
+          List of hostnames, IP addresses, or CIDR ranges the container is
+          allowed to connect to outbound. When non-empty, all other outbound
+          connections are blocked via iptables/ip6tables inside the container.
+
+          Requires networkMode = "bridge". Each entry is either:
+          - a hostname (e.g. "github.com") — resolved at container start via getent
+          - a bare IP address (e.g. "192.168.1.10")
+          - a CIDR range (e.g. "10.0.0.0/8", "2001:db8::/32")
+
+          Loopback, DNS (port 53), and already-established connections are
+          always permitted regardless of this list.
+
+          Adds --cap-add=NET_ADMIN to runArgs automatically.
+        '';
+      };
+
+      dev = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Enable dev mode for the network allowlist firewall.
+          When true:
+          - Passwordless sudo is NOT removed after the firewall is applied,
+            so you can re-run the script manually to tweak rules.
+          - The firewall script respects the EXTRA_ALLOWED_HOSTS environment
+            variable, letting you add hosts at runtime without a Nix rebuild:
+              EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
+          Only meaningful when allowedHosts is non-empty.
+        '';
+      };
     };
 
     netrc = lib.mkOption {
@@ -392,6 +563,9 @@ in
         pkgs.skopeo
         pkgs.slirp4netns
         pkgs.fuse-overlayfs
+      ])
+      ++ (optionals (lib.elem "cli" cfg.tweaks) [
+        pkgs-devcontainer.devcontainer
       ]);
     enterShell =
       ''
