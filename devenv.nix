@@ -22,22 +22,21 @@ let
   settingsFormat = pkgs.formats.json { };
 
   # Fetch each vsix into the Nix store at build time
-  vsixFetched = map
-    (entry:
-      let
-        url = if builtins.isAttrs entry then entry.url else entry;
-        sha256 = if builtins.isAttrs entry && entry ? sha256 then entry.sha256 else null;
-        fetched = if sha256 != null
-          then builtins.fetchurl { inherit url sha256; }
-          else builtins.fetchurl url;
-        filename = lib.last (lib.splitString "/" url);
-      in {
-        storePath = fetched;
-        containerPath = "/run/host-vsix/${filename}";
-        mount = "source=${fetched},target=/run/host-vsix/${filename},type=bind,readonly";
-      }
-    )
-    cfg.vsix;
+  vsixFetched = map (
+    entry:
+    let
+      url = if builtins.isAttrs entry then entry.url else entry;
+      sha256 = if builtins.isAttrs entry && entry ? sha256 then entry.sha256 else null;
+      fetched =
+        if sha256 != null then builtins.fetchurl { inherit url sha256; } else builtins.fetchurl url;
+      filename = lib.last (lib.splitString "/" url);
+    in
+    {
+      storePath = fetched;
+      containerPath = "/run/host-vsix/${filename}";
+      mount = "source=${fetched},target=/run/host-vsix/${filename},type=bind,readonly";
+    }
+  ) cfg.vsix;
 
   vsixMounts = map (e: e.mount) vsixFetched;
   vsixContainerPaths = map (e: e.containerPath) vsixFetched;
@@ -77,11 +76,13 @@ let
       };
 
       # Apply podman/rootless tweaks
-      podmanSettings = lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) {
-        containerUser = "vscode";
-        containerEnv.HOME = "/home/vscode";
-        runArgs = [ "--userns=keep-id" ];
-      };
+      podmanSettings =
+        lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks)
+          {
+            containerUser = "vscode";
+            containerEnv.HOME = "/home/vscode";
+            runArgs = [ "--userns=keep-id" ];
+          };
 
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.networkMode == "host") {
@@ -96,59 +97,61 @@ let
       # Apply named network mode
       isNamedNetwork = cfg.networkMode == "named";
       namedNetworkSettings = lib.optionalAttrs isNamedNetwork (
-        assert lib.assertMsg (cfg.networkName != null) "devcontainer.networkName must be set when networkMode = \"named\"";
-        { runArgs = [ "--network=${cfg.networkName}" ]; }
+        assert lib.assertMsg (
+          cfg.networkName != null
+        ) "devcontainer.networkName must be set when networkMode = \"named\"";
+        {
+          runArgs = [ "--network=${cfg.networkName}" ];
+        }
       );
 
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if firewallEnabled && cfg.networkMode == "host"
-        then throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"host\""
-        else if firewallEnabled && cfg.networkMode == "none"
-        then throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"none\""
-        else lib.optional firewallEnabled
-          "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
+        if firewallEnabled && cfg.networkMode == "host" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"host\""
+        else if firewallEnabled && cfg.networkMode == "none" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"none\""
+        else
+          lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
 
       firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
-        lib.recursiveUpdate (
-          lib.recursiveUpdate (
-            lib.recursiveUpdate (
-              lib.recursiveUpdate (
-                lib.recursiveUpdate (
-                  lib.recursiveUpdate gpgSettings netrcSettings
-                ) passSettings
-              ) podmanSettings
-            ) hostNetworkSettings
-          ) noneNetworkSettings
-        ) namedNetworkSettings
+        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) passSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings
       );
 
       # Special handling for lists - concatenate instead of replace
-      finalMounts = (baseSettings.mounts or [])
-        ++ (gpgSettings.mounts or [])
-        ++ (netrcSettings.mounts or [])
-        ++ (passSettings.mounts or [])
+      finalMounts =
+        (baseSettings.mounts or [ ])
+        ++ (gpgSettings.mounts or [ ])
+        ++ (netrcSettings.mounts or [ ])
+        ++ (passSettings.mounts or [ ])
         ++ vsixMounts
         ++ firewallMounts;
 
-      finalRunArgs = (baseSettings.runArgs or [])
-        ++ (podmanSettings.runArgs or [])
-        ++ (hostNetworkSettings.runArgs or [])
-        ++ (noneNetworkSettings.runArgs or [])
-        ++ (namedNetworkSettings.runArgs or [])
+      finalRunArgs =
+        (baseSettings.runArgs or [ ])
+        ++ (podmanSettings.runArgs or [ ])
+        ++ (hostNetworkSettings.runArgs or [ ])
+        ++ (noneNetworkSettings.runArgs or [ ])
+        ++ (namedNetworkSettings.runArgs or [ ])
         ++ firewallRunArgs;
 
-      finalContainerEnv = (baseSettings.containerEnv or {})
-        // (podmanSettings.containerEnv or {})
-        // (netrcSettings.containerEnv or {});
+      finalContainerEnv =
+        (baseSettings.containerEnv or { })
+        // (podmanSettings.containerEnv or { })
+        // (netrcSettings.containerEnv or { });
 
-      finalRemoteEnv = (baseSettings.remoteEnv or {})
-        // (gpgSettings.remoteEnv or {});
+      finalRemoteEnv = (baseSettings.remoteEnv or { }) // (gpgSettings.remoteEnv or { });
 
-      finalOnCreateCommand = netrcSettings.onCreateCommand or (if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then baseSettings.onCreateCommand else "");
+      finalOnCreateCommand =
+        netrcSettings.onCreateCommand or (
+          if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then
+            baseSettings.onCreateCommand
+          else
+            ""
+        );
 
       # Concatenate all postStartCommand sources: user base, gpg-agent, firewall.
       # This also fixes the pre-existing issue where gpg-agent would overwrite the
@@ -161,53 +164,54 @@ let
             (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
           ];
         in
-        if parts != [] then lib.concatStringsSep " && " parts else null;
+        if parts != [ ] then lib.concatStringsSep " && " parts else null;
 
     in
-      (lib.removeAttrs mergedSettings [ "onCreateCommand" "postCreateCommand" "postStartCommand" ])
-      // lib.optionalAttrs (finalPostStartCommand != null) {
-        postStartCommand = finalPostStartCommand;
-      }
-      // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
-        postCreateCommand = mergedSettings.postCreateCommand;
-      }
-      // {
-        mounts = finalMounts;
-        runArgs = finalRunArgs;
-        containerEnv = finalContainerEnv;
-        remoteEnv = finalRemoteEnv;
-      }
-      // lib.optionalAttrs (finalOnCreateCommand != null && finalOnCreateCommand != "") {
-        onCreateCommand = finalOnCreateCommand;
-      };
+    (lib.removeAttrs mergedSettings [
+      "onCreateCommand"
+      "postCreateCommand"
+      "postStartCommand"
+    ])
+    // lib.optionalAttrs (finalPostStartCommand != null) {
+      postStartCommand = finalPostStartCommand;
+    }
+    // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
+      postCreateCommand = mergedSettings.postCreateCommand;
+    }
+    // {
+      mounts = finalMounts;
+      runArgs = finalRunArgs;
+      containerEnv = finalContainerEnv;
+      remoteEnv = finalRemoteEnv;
+    }
+    // lib.optionalAttrs (finalOnCreateCommand != null && finalOnCreateCommand != "") {
+      onCreateCommand = finalOnCreateCommand;
+    };
 
   devcontainerSettings =
     let
       # Get the default extensions and user extensions
-      defaultExtensions = [];
+      defaultExtensions = [ ];
       userExtensions = computedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions + vsix container paths, then remove vscodevim.vim
       allExtensions = lib.unique (defaultExtensions ++ userExtensions ++ vsixContainerPaths);
       filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
 
       # Then apply customizations that need special handling
-      finalSettings =
-        computedSettings
-        // {
-          customizations = computedSettings.customizations // {
-            vscode =
-              computedSettings.customizations.vscode
-              // {
-                extensions = filteredExtensions;
-              }
-              // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
-                settings = computedSettings.customizations.vscode.settings or { } // {
-                  "remote.autoForwardPorts" = false;
-                };
-              }
+      finalSettings = computedSettings // {
+        customizations = computedSettings.customizations // {
+          vscode =
+            computedSettings.customizations.vscode
+            // {
+              extensions = filteredExtensions;
+            }
+            // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
+              settings = computedSettings.customizations.vscode.settings or { } // {
+                "remote.autoForwardPorts" = false;
               };
-          };
+            };
         };
+      };
     in
     finalSettings;
   file = settingsFormat.generate "devcontainer.json" devcontainerSettings;
@@ -287,10 +291,17 @@ in
     };
 
     vsix = lib.mkOption {
-      type = lib.types.listOf (lib.types.either lib.types.str (lib.types.submodule {
-        options.url = lib.mkOption { type = lib.types.str; };
-        options.sha256 = lib.mkOption { type = lib.types.str; default = ""; };
-      }));
+      type = lib.types.listOf (
+        lib.types.either lib.types.str (
+          lib.types.submodule {
+            options.url = lib.mkOption { type = lib.types.str; };
+            options.sha256 = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+            };
+          }
+        )
+      );
       default = [ ];
       description = ''
         List of .vsix extension files to fetch into the Nix store at build time
@@ -369,7 +380,10 @@ in
           ]
         );
         default = [ ];
-        example = [ "github" "openai" ];
+        example = [
+          "github"
+          "openai"
+        ];
         description = ''
           Enable curated outbound host allowlists for well-known services.
           Each name adds a hardcoded set of hostnames (and CIDRs for github)
@@ -500,13 +514,12 @@ in
       ++ (optionals (lib.elem "vscode" cfg.tweaks) [
         (pkgs-devcontainer.vscode-with-extensions.override {
           vscode = pkgs-devcontainer.vscode;
-          vscodeExtensions =
-            [
-              pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
-            ]
-            ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
-              pkgs-devcontainer.vscode-extensions.vscodevim.vim
-            ];
+          vscodeExtensions = [
+            pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
+          ]
+          ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
+            pkgs-devcontainer.vscode-extensions.vscodevim.vim
+          ];
         })
       ])
       ++ (optionals (lib.elem "podman" cfg.tweaks) [
@@ -520,12 +533,11 @@ in
       ++ (optionals (lib.elem "cli" cfg.tweaks) [
         pkgs-devcontainer.devcontainer
       ]);
-    enterShell =
-      ''
-        cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
-      ''
-      + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
-        ${podmanSetupScript}
-      '');
+    enterShell = ''
+      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
+    ''
+    + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
+      ${podmanSetupScript}
+    '');
   };
 }

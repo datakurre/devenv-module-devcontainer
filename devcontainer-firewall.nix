@@ -12,16 +12,16 @@ let
 
   enabledAllowedServices = cfg.network.allowedServices;
 
-  allowedServiceHosts =
-    lib.concatLists
-      (map (name: allServices.${name}.hosts) enabledAllowedServices);
+  allowedServiceHosts = lib.concatLists (
+    map (name: allServices.${name}.hosts) enabledAllowedServices
+  );
 
-  allowedServiceCidrs =
-    lib.concatLists
-      (map (name: allServices.${name}.cidrs) enabledAllowedServices);
+  allowedServiceCidrs = lib.concatLists (
+    map (name: allServices.${name}.cidrs) enabledAllowedServices
+  );
 
   userHosts = lib.filter (s: !isCidr s) cfg.network.allowedHosts;
-  userCidrs  = lib.filter isCidr       cfg.network.allowedHosts;
+  userCidrs = lib.filter isCidr cfg.network.allowedHosts;
 
   effectiveHosts = lib.unique (userHosts ++ allowedServiceHosts);
   effectiveCidrs = lib.unique (userCidrs ++ allowedServiceCidrs);
@@ -34,7 +34,7 @@ let
   firewallScript =
     let
       hostsStr = lib.concatStringsSep " " effectiveHosts;
-      cidrsStr  = lib.concatStringsSep " " effectiveCidrs;
+      cidrsStr = lib.concatStringsSep " " effectiveCidrs;
     in
     pkgs.writeScript "devcontainer-firewall" ''
       #!/bin/sh
