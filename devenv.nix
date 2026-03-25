@@ -53,11 +53,21 @@ let
         exec sudo "$0" "$@"
       fi
 
+      # If iptables is not on PATH, re-exec inside a nix shell that provides it.
+      # This is safe here because the firewall hasn't been applied yet, so internet
+      # access (needed by `nix shell` to fetch iptables) is still unrestricted.
+      if ! command -v iptables >/dev/null 2>&1; then
+        NIX_BIN="$(command -v nix 2>/dev/null || echo /nix/var/nix/profiles/default/bin/nix)"
+        if [ -x "$NIX_BIN" ]; then
+          exec "$NIX_BIN" shell nixpkgs#iptables --command sh "$0" "$@"
+        fi
+      fi
+
       ALLOWED_HOSTS="${hostsStr}"
       ALLOWED_CIDRS="${cidrsStr}"
 
       # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
-      #   EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
+      #   sudo EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" /run/devcontainer-firewall
       if [ -n "''${EXTRA_ALLOWED_HOSTS:-}" ]; then
         ALLOWED_HOSTS="$ALLOWED_HOSTS ''${EXTRA_ALLOWED_HOSTS}"
       fi
@@ -234,10 +244,7 @@ let
           parts = lib.filter (p: p != null && p != "") [
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
-          (if cfg.network.allowedHosts != [] then
-            (if cfg.network.dev then "FIREWALL_DEV=1 sudo /run/devcontainer-firewall"
-             else "sudo /run/devcontainer-firewall")
-          else null)
+          (if cfg.network.allowedHosts != [] then "sudo /run/devcontainer-firewall" else null)
           ];
         in
         if parts != [] then lib.concatStringsSep " && " parts else null;
