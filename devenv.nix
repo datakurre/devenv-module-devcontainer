@@ -10,13 +10,12 @@ let
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = true;
   };
+  allServices = import ./services;
   cfg = config.devcontainer;
   firewall = import ./devcontainer-firewall.nix {
     inherit pkgs lib cfg;
   };
   inherit (firewall)
-    knownAllowedServices
-    unknownAllowedServices
     firewallEnabled
     firewallScript
     ;
@@ -96,9 +95,7 @@ let
 
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if unknownAllowedServices != []
-        then throw "Unknown devcontainer.network.allowedServices: ${lib.concatStringsSep ", " unknownAllowedServices}. Known services: ${lib.concatStringsSep ", " (builtins.attrNames knownAllowedServices)}"
-        else if firewallEnabled && cfg.networkMode != "bridge"
+        if firewallEnabled && cfg.networkMode != "bridge"
         then throw "devcontainer.network.allowedHosts/allowedServices requires networkMode = \"bridge\""
         else lib.optional firewallEnabled
           "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
@@ -329,42 +326,30 @@ in
       };
 
       allowedServices = lib.mkOption {
-        type = lib.types.attrsOf lib.types.bool;
-        default = { };
-        example = {
-          github = true;
-        };
+        type = lib.types.listOf (
+          lib.types.enum [
+            "anthropic"
+            "cachix"
+            "dockerhub"
+            "github"
+            "gitlab"
+            "google"
+            "nixpkgs"
+            "npm"
+            "openai"
+            "pypi"
+          ]
+        );
+        default = [ ];
+        example = [ "github" "openai" ];
         description = ''
-          Enable curated host allowlists for common services.
+          Enable curated outbound host allowlists for well-known services.
+          Each name adds a hardcoded set of hostnames (and CIDRs for github)
+          to the firewall allowlist. Service definitions live in the
+          services/ directory of this module.
 
-          Example:
-            devcontainer.network.allowedServices.github = true;
-
-          Currently supported services:
-          - github: expands to maintained GitHub hostnames and dynamically
-            loads GitHub CIDR/IP master data from https://api.github.com/meta
-            when applying the firewall
-
-          These hosts are merged with network.allowedHosts.
+          These are merged with network.allowedHosts.
           Only outbound traffic is filtered; inbound traffic is not blocked.
-
-          Unknown service keys fail evaluation with a clear error.
-          Values set to false are ignored.
-        '';
-      };
-
-      dev = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = ''
-          Enable dev mode for the network allowlist firewall.
-          When true:
-          - Passwordless sudo is NOT removed after the firewall is applied,
-            so you can re-run the script manually to tweak rules.
-          - The firewall script respects the EXTRA_ALLOWED_HOSTS environment
-            variable, letting you add hosts at runtime without a Nix rebuild:
-              EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
-          Only meaningful when allowedHosts is non-empty.
         '';
       };
     };

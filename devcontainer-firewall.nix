@@ -4,53 +4,37 @@
   cfg,
 }:
 let
-  # Curated allowlist presets for common services.
-  # Source for GitHub domains: https://api.github.com/meta
-  # Note: keep this list to concrete hostnames because getent does not resolve
-  # wildcard entries like *.githubusercontent.com.
-  knownAllowedServices = {
-    github = {
-      hosts = [
-        "github.com"
-        "api.github.com"
-        "objects.githubusercontent.com"
-        "raw.githubusercontent.com"
-        "githubusercontent.com"
-        "codeload.github.com"
-        "uploads.github.com"
-      ];
-      metaEndpoint = "https://api.github.com/meta";
-    };
-  };
+  # All curated service allowlist definitions: { name = { hosts; cidrs; }; }
+  allServices = import ./services;
 
-  unknownAllowedServices =
-    lib.filter
-      (name: !(builtins.hasAttr name knownAllowedServices))
-      (builtins.attrNames cfg.network.allowedServices);
+  # Detect CIDR notation: any string containing '/' followed by decimal digits.
+  isCidr = s: builtins.match ".*/[0-9]+" s != null;
 
-  enabledAllowedServices =
-    lib.filter
-      (name: cfg.network.allowedServices.${name} or false)
-      (builtins.attrNames knownAllowedServices);
+  enabledAllowedServices = cfg.network.allowedServices;
 
   allowedServiceHosts =
     lib.concatLists
-      (map (name: knownAllowedServices.${name}.hosts or [ ]) enabledAllowedServices);
-  effectiveAllowedHosts = lib.unique (cfg.network.allowedHosts ++ allowedServiceHosts);
-  firewallEnabled = effectiveAllowedHosts != [ ];
+      (map (name: allServices.${name}.hosts) enabledAllowedServices);
+
+  allowedServiceCidrs =
+    lib.concatLists
+      (map (name: allServices.${name}.cidrs) enabledAllowedServices);
+
+  userHosts = lib.filter (s: !isCidr s) cfg.network.allowedHosts;
+  userCidrs  = lib.filter isCidr       cfg.network.allowedHosts;
+
+  effectiveHosts = lib.unique (userHosts ++ allowedServiceHosts);
+  effectiveCidrs = lib.unique (userCidrs ++ allowedServiceCidrs);
+
+  firewallEnabled = effectiveHosts != [ ] || effectiveCidrs != [ ];
 
   # Generate nftables allowlist firewall script for network.allowedHosts and
   # network.allowedServices. The rules only hook OUTPUT so inbound traffic is
   # untouched and published devcontainer ports keep working.
   firewallScript =
     let
-      isCidr = s: builtins.match ".*/.*" s != null;
-      hosts = lib.filter (s: !isCidr s) effectiveAllowedHosts;
-      cidrs = lib.filter isCidr effectiveAllowedHosts;
-      hostsStr = lib.concatStringsSep " " hosts;
-      cidrsStr = lib.concatStringsSep " " cidrs;
-      enabledServicesStr = lib.concatStringsSep " " enabledAllowedServices;
-      githubMetaEndpoint = knownAllowedServices.github.metaEndpoint;
+      hostsStr = lib.concatStringsSep " " effectiveHosts;
+      cidrsStr  = lib.concatStringsSep " " effectiveCidrs;
     in
     pkgs.writeScript "devcontainer-firewall" ''
       #!/bin/sh
@@ -74,41 +58,6 @@ let
 
       ALLOWED_HOSTS="${hostsStr}"
       ALLOWED_CIDRS="${cidrsStr}"
-      ENABLED_SERVICES="${enabledServicesStr}"
-
-      fetch_github_meta_cidrs() {
-        if ! command -v curl >/dev/null 2>&1; then
-          echo "WARNING: curl not found, skipping GitHub master-data CIDRs"
-          return 0
-        fi
-
-        meta_json="$(curl -fsSL --retry 2 --connect-timeout 5 "${githubMetaEndpoint}" 2>/dev/null || true)"
-        if [ -z "$meta_json" ]; then
-          echo "WARNING: failed to fetch GitHub meta endpoint, continuing with static host allowlist"
-          return 0
-        fi
-
-        # Extract IPv4 and IPv6 CIDRs from JSON without requiring jq.
-        echo "$meta_json" \
-          | grep -Eo '"([0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]+|[0-9a-fA-F:]+/[0-9]+)"' \
-          | tr -d '"' \
-          | sort -u \
-          | tr '\n' ' '
-      }
-
-      if echo " $ENABLED_SERVICES " | grep -q " github "; then
-        GITHUB_META_CIDRS="$(fetch_github_meta_cidrs)"
-        if [ -n "$GITHUB_META_CIDRS" ]; then
-          ALLOWED_CIDRS="$ALLOWED_CIDRS $GITHUB_META_CIDRS"
-          echo "Loaded GitHub CIDR master data from ${githubMetaEndpoint}"
-        fi
-      fi
-
-      # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
-      #   sudo EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" /run/devcontainer-firewall
-      if [ -n "''${EXTRA_ALLOWED_HOSTS:-}" ]; then
-        ALLOWED_HOSTS="$ALLOWED_HOSTS ''${EXTRA_ALLOWED_HOSTS}"
-      fi
 
       echo "Applying devcontainer network allowlist..."
 
@@ -128,20 +77,22 @@ let
       # Already-established / related connections (e.g. replies to inbound).
       nft add rule inet devcontainer output ct state established,related accept
 
-      # Named sets for allowed addresses — kernel uses a hash, not a linear scan.
-      nft add set inet devcontainer allowed4 '{ type ipv4_addr; }'
-      nft add set inet devcontainer allowed6 '{ type ipv6_addr; }'
+      # Named sets for allowed addresses — flags interval enables CIDR prefix support.
+      # Using 2>/dev/null || true on element additions to silence harmless
+      # "already exists / overlapping interval" errors for duplicate IPs.
+      nft add set inet devcontainer allowed4 '{ type ipv4_addr; flags interval; }'
+      nft add set inet devcontainer allowed6 '{ type ipv6_addr; flags interval; }'
       nft add rule inet devcontainer output ip  daddr @allowed4 accept
       nft add rule inet devcontainer output ip6 daddr @allowed6 accept
 
       # Resolve each hostname and populate the sets.
       for host in $ALLOWED_HOSTS; do
         for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-          nft add element inet devcontainer allowed4 "{ $ip }"
+          nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
           echo "  allowed: $host -> $ip"
         done
         for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-          nft add element inet devcontainer allowed6 "{ $ip }"
+          nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
           echo "  allowed: $host -> $ip"
         done
       done
@@ -149,33 +100,22 @@ let
       # Add CIDR ranges directly to the appropriate set.
       for cidr in $ALLOWED_CIDRS; do
         case "$cidr" in
-          *:*) nft add element inet devcontainer allowed6 "{ $cidr }"; echo "  allowed: CIDR $cidr" ;;
-          *)   nft add element inet devcontainer allowed4 "{ $cidr }"; echo "  allowed: CIDR $cidr" ;;
+          *:*) nft add element inet devcontainer allowed6 "{ $cidr }" 2>/dev/null || true; echo "  allowed: CIDR $cidr" ;;
+          *)   nft add element inet devcontainer allowed4 "{ $cidr }" 2>/dev/null || true; echo "  allowed: CIDR $cidr" ;;
         esac
       done
 
       echo "Network allowlist applied."
 
       # Remove passwordless sudo so the container user cannot modify the rules.
-      # Skipped in dev mode to allow manual rule tweaking.
-      ${lib.optionalString (!cfg.network.dev) ''
-        if [ -f /etc/sudoers.d/vscode ]; then
-          rm -f /etc/sudoers.d/vscode
-          echo "Passwordless sudo removed."
-        fi
-      ''}
-      ${lib.optionalString cfg.network.dev ''
-        echo "Dev mode: passwordless sudo kept. Re-run with EXTRA_ALLOWED_HOSTS to add hosts."
-      ''}
+      if [ -f /etc/sudoers.d/vscode ]; then
+        rm -f /etc/sudoers.d/vscode
+        echo "Passwordless sudo removed."
+      fi
     '';
 in
 {
   inherit
-    knownAllowedServices
-    unknownAllowedServices
-    enabledAllowedServices
-    allowedServiceHosts
-    effectiveAllowedHosts
     firewallEnabled
     firewallScript
     ;
