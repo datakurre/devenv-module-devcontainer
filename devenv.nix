@@ -93,10 +93,19 @@ let
         runArgs = [ "--network=none" ];
       };
 
+      # Apply named network mode
+      isNamedNetwork = cfg.networkMode == "named";
+      namedNetworkSettings = lib.optionalAttrs isNamedNetwork (
+        assert lib.assertMsg (cfg.networkName != null) "devcontainer.networkName must be set when networkMode = \"named\"";
+        { runArgs = [ "--network=${cfg.networkName}" ]; }
+      );
+
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if firewallEnabled && cfg.networkMode != "bridge"
-        then throw "devcontainer.network.allowedHosts/allowedServices requires networkMode = \"bridge\""
+        if firewallEnabled && cfg.networkMode == "host"
+        then throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"host\""
+        else if firewallEnabled && cfg.networkMode == "none"
+        then throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"none\""
         else lib.optional firewallEnabled
           "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
 
@@ -108,11 +117,13 @@ let
           lib.recursiveUpdate (
             lib.recursiveUpdate (
               lib.recursiveUpdate (
-                lib.recursiveUpdate gpgSettings netrcSettings
-              ) passSettings
-            ) podmanSettings
-          ) hostNetworkSettings
-        ) noneNetworkSettings
+                lib.recursiveUpdate (
+                  lib.recursiveUpdate gpgSettings netrcSettings
+                ) passSettings
+              ) podmanSettings
+            ) hostNetworkSettings
+          ) noneNetworkSettings
+        ) namedNetworkSettings
       );
 
       # Special handling for lists - concatenate instead of replace
@@ -127,6 +138,7 @@ let
         ++ (podmanSettings.runArgs or [])
         ++ (hostNetworkSettings.runArgs or [])
         ++ (noneNetworkSettings.runArgs or [])
+        ++ (namedNetworkSettings.runArgs or [])
         ++ firewallRunArgs;
 
       finalContainerEnv = (baseSettings.containerEnv or {})
@@ -192,6 +204,7 @@ let
                 settings = computedSettings.customizations.vscode.settings or { } // {
                   "remote.autoForwardPorts" = false;
                 };
+              }
               };
           };
         };
@@ -291,13 +304,28 @@ in
         "bridge"
         "host"
         "none"
+        "named"
       ];
       default = "bridge";
       description = ''
         Network mode for the container.
-        - "bridge": Use default network mode
+        - "bridge": Use the default bridge network (default)
         - "host": Use host networking (shares the host's network namespace)
         - "none": Disable all networking (complete isolation)
+        - "named": Join a named Docker/Podman network specified by networkName.
+          Two devcontainers using the same name share that network and can
+          reach each other by container name. The network must be pre-created
+          before starting the container (e.g. `docker network create my-net`).
+      '';
+    };
+
+    networkName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "my-project-net";
+      description = ''
+        Name of the Docker/Podman network to join when networkMode = "named".
+        Must be set whenever networkMode = "named".
       '';
     };
 
