@@ -118,7 +118,8 @@ devenv shell
 | `enable` | `true`, `false` | Enable `.devcontainer.json` generation |
 | `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc`, `pass`, `cli` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option); `pass`: mounts `$HOME/.password-store` into container; `cli`: installs the devcontainer CLI (`@devcontainers/cli`) on the host shell |
 | `networkMode` | `bridge`, `host`, `none` | `host` shares the host network namespace; `none` disables all networking (complete isolation) |
-| `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via iptables/ip6tables. Requires `networkMode = "bridge"`. Loopback and DNS are always allowed. |
+| `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via nftables. Requires `networkMode = "bridge"`. Loopback and DNS are always allowed. Inbound traffic is not filtered. |
+| `network.allowedServices` | attribute set of bools | Service shortcuts that expand to curated allowlists. Example: `devcontainer.network.allowedServices.github = true;`. For GitHub, hostnames plus CIDR/IP master data from `https://api.github.com/meta` are used when applying the firewall. Merged with `network.allowedHosts`. Inbound traffic is not filtered. |
 | `network.dev` | `true`, `false` | Dev mode for the firewall. When `true`, passwordless sudo is **not** removed after firewall setup (so rules can be tweaked manually), and the firewall script respects the `EXTRA_ALLOWED_HOSTS` env var for runtime host additions without a Nix rebuild. Only meaningful when `allowedHosts` is non-empty. |
 | `netrc` | path | Path to `.netrc` file to mount. Required when using the `netrc` tweak |
 | `settings` | any | Pass-through to `devcontainer.json` |
@@ -131,14 +132,14 @@ Two independent controls are provided:
 
 | Goal | Setting |
 |------|---------|
-| Restrict outbound to a specific allowlist | `network.allowedHosts` |
+| Restrict outbound to a specific allowlist | `network.allowedHosts` and/or `network.allowedServices` |
 | Block all networking completely | `networkMode = "none"` |
 
-### `network.allowedHosts` — outbound allowlist
+### `network.allowedHosts` and `network.allowedServices` — outbound allowlist
 
-When `allowedHosts` is non-empty the module:
+When the combined allowlist (`allowedHosts` + enabled `allowedServices`) is non-empty the module:
 
-1. Generates a shell script (stored in the Nix store) that programs `iptables`/`ip6tables` OUTPUT rules.
+1. Generates a shell script (stored in the Nix store) that programs nftables OUTPUT rules.
 2. Bind-mounts the script into the container at `/run/devcontainer-firewall`.
 3. Adds `--cap-add=NET_ADMIN` to `runArgs` so the container can modify its own network namespace.
 4. Calls `sudo /run/devcontainer-firewall` from `postStartCommand` so the rules are applied at every container start.
@@ -154,9 +155,19 @@ Each entry in `allowedHosts` can be:
 - a bare **IP address** (e.g. `"192.168.1.10"`)
 - a **CIDR range** (e.g. `"10.0.0.0/8"`, `"2001:db8::/32"`)
 
-IPv4 and IPv6 are handled separately. If `iptables` or `ip6tables` is absent in the container image, the firewall script automatically re-executes itself inside `nix shell nixpkgs#iptables` to obtain them.
+`allowedServices` is a convenience shortcut for known services. Example:
 
-`allowedHosts` requires `networkMode = "bridge"` (the default); combining it with `"host"` or `"none"` is caught at eval time with a clear error.
+```nix
+devcontainer.network.allowedServices.github = true;
+```
+
+This expands to a maintained set of GitHub hostnames and also loads GitHub CIDR/IP master data from `https://api.github.com/meta` when applying the firewall. The result is merged with `allowedHosts`.
+
+IPv4 and IPv6 are handled separately. If `nft` is absent in the container image, the firewall script automatically re-executes itself inside `nix shell nixpkgs#nftables` to obtain it.
+
+Only outbound traffic is filtered (OUTPUT hook). Inbound traffic is not filtered by this firewall, so published/forwarded devcontainer service ports remain reachable.
+
+`allowedHosts`/`allowedServices` requires `networkMode = "bridge"` (the default); combining either with `"host"` or `"none"` is caught at eval time with a clear error.
 
 ### Security hardening: sudo removal
 

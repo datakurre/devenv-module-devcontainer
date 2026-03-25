@@ -11,6 +11,15 @@ let
     config.allowUnfree = true;
   };
   cfg = config.devcontainer;
+  firewall = import ./devcontainer-firewall.nix {
+    inherit pkgs lib cfg;
+  };
+  inherit (firewall)
+    knownAllowedServices
+    unknownAllowedServices
+    firewallEnabled
+    firewallScript
+    ;
   settingsFormat = pkgs.formats.json { };
 
   # Fetch each vsix into the Nix store at build time
@@ -33,112 +42,6 @@ let
 
   vsixMounts = map (e: e.mount) vsixFetched;
   vsixContainerPaths = map (e: e.containerPath) vsixFetched;
-
-  # Generate iptables/ip6tables allowlist firewall script for network.allowedHosts.
-  # Stored in the Nix store on the host and bind-mounted into the container at
-  # /run/devcontainer-firewall via the mounts list (see computedSettings below).
-  firewallScript =
-    let
-      isCidr = s: builtins.match ".*/.*" s != null;
-      hosts = lib.filter (s: !isCidr s) cfg.network.allowedHosts;
-      cidrs = lib.filter isCidr cfg.network.allowedHosts;
-      hostsStr = lib.concatStringsSep " " hosts;
-      cidrsStr = lib.concatStringsSep " " cidrs;
-    in
-    pkgs.writeScript "devcontainer-firewall" ''
-      #!/bin/sh
-      # Devcontainer outbound network allowlist.
-      # Self-escalate to root; the vscode user has passwordless sudo in devcontainer images.
-      if [ "$(id -u)" != "0" ]; then
-        exec sudo "$0" "$@"
-      fi
-
-      # If iptables is not on PATH, re-exec inside a nix shell that provides it.
-      # This is safe here because the firewall hasn't been applied yet, so internet
-      # access (needed by `nix shell` to fetch iptables) is still unrestricted.
-      if ! command -v iptables >/dev/null 2>&1; then
-        NIX_BIN="$(command -v nix 2>/dev/null || echo /nix/var/nix/profiles/default/bin/nix)"
-        if [ -x "$NIX_BIN" ]; then
-          exec "$NIX_BIN" shell nixpkgs#iptables --command sh "$0" "$@"
-        fi
-      fi
-
-      ALLOWED_HOSTS="${hostsStr}"
-      ALLOWED_CIDRS="${cidrsStr}"
-
-      # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
-      #   sudo EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" /run/devcontainer-firewall
-      if [ -n "''${EXTRA_ALLOWED_HOSTS:-}" ]; then
-        ALLOWED_HOSTS="$ALLOWED_HOSTS ''${EXTRA_ALLOWED_HOSTS}"
-      fi
-      setup_ipv4() {
-        iptables -F OUTPUT
-        iptables -P OUTPUT DROP
-        iptables -A OUTPUT -o lo -j ACCEPT
-        iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-        iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-        iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        for host in $ALLOWED_HOSTS; do
-          for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-            iptables -A OUTPUT -d "$ip" -j ACCEPT
-            echo "  ipv4 allowed: $host -> $ip"
-          done
-        done
-        for cidr in $ALLOWED_CIDRS; do
-          case "$cidr" in
-            *:*) ;;
-            *) iptables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv4 allowed: CIDR $cidr" ;;
-          esac
-        done
-      }
-
-      setup_ipv6() {
-        ip6tables -F OUTPUT
-        ip6tables -P OUTPUT DROP
-        ip6tables -A OUTPUT -o lo -j ACCEPT
-        ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT
-        ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-        ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        for host in $ALLOWED_HOSTS; do
-          for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-            ip6tables -A OUTPUT -d "$ip" -j ACCEPT
-            echo "  ipv6 allowed: $host -> $ip"
-          done
-        done
-        for cidr in $ALLOWED_CIDRS; do
-          case "$cidr" in
-            *:*) ip6tables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv6 allowed: CIDR $cidr" ;;
-          esac
-        done
-      }
-
-      echo "Applying devcontainer network allowlist..."
-      if command -v iptables >/dev/null 2>&1; then
-        setup_ipv4
-        echo "IPv4 rules applied."
-      else
-        echo "WARNING: iptables not found, IPv4 traffic unrestricted"
-      fi
-      if command -v ip6tables >/dev/null 2>&1; then
-        setup_ipv6
-        echo "IPv6 rules applied."
-      else
-        echo "WARNING: ip6tables not found, IPv6 traffic unrestricted"
-      fi
-      echo "Network allowlist applied."
-
-      # Remove passwordless sudo so the container user cannot modify the rules.
-      # Skipped in dev mode to allow manual rule tweaking.
-      ${lib.optionalString (!cfg.network.dev) ''
-        if [ -f /etc/sudoers.d/vscode ]; then
-          rm -f /etc/sudoers.d/vscode
-          echo "Passwordless sudo removed."
-        fi
-      ''}
-      ${lib.optionalString cfg.network.dev ''
-        echo "Dev mode: passwordless sudo kept. Re-run with EXTRA_ALLOWED_HOSTS to add hosts."
-      ''}
-    '';
 
   # Compute final settings with tweaks applied
   computedSettings =
@@ -193,12 +96,14 @@ let
 
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if cfg.network.allowedHosts != [] && cfg.networkMode != "bridge"
-        then throw "devcontainer.network.allowedHosts requires networkMode = \"bridge\""
-        else lib.optional (cfg.network.allowedHosts != [])
+        if unknownAllowedServices != []
+        then throw "Unknown devcontainer.network.allowedServices: ${lib.concatStringsSep ", " unknownAllowedServices}. Known services: ${lib.concatStringsSep ", " (builtins.attrNames knownAllowedServices)}"
+        else if firewallEnabled && cfg.networkMode != "bridge"
+        then throw "devcontainer.network.allowedHosts/allowedServices requires networkMode = \"bridge\""
+        else lib.optional firewallEnabled
           "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
 
-      firewallRunArgs = lib.optional (cfg.network.allowedHosts != []) "--cap-add=NET_ADMIN";
+      firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
@@ -244,7 +149,7 @@ let
           parts = lib.filter (p: p != null && p != "") [
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
-          (if cfg.network.allowedHosts != [] then "sudo /run/devcontainer-firewall" else null)
+            (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
           ];
         in
         if parts != [] then lib.concatStringsSep " && " parts else null;
@@ -406,7 +311,10 @@ in
         description = ''
           List of hostnames, IP addresses, or CIDR ranges the container is
           allowed to connect to outbound. When non-empty, all other outbound
-          connections are blocked via iptables/ip6tables inside the container.
+          connections are blocked via nftables inside the container.
+
+          Only outbound traffic is filtered; inbound traffic is not blocked.
+          This keeps published/forwarded devcontainer service ports reachable.
 
           Requires networkMode = "bridge". Each entry is either:
           - a hostname (e.g. "github.com") — resolved at container start via getent
@@ -417,6 +325,31 @@ in
           always permitted regardless of this list.
 
           Adds --cap-add=NET_ADMIN to runArgs automatically.
+        '';
+      };
+
+      allowedServices = lib.mkOption {
+        type = lib.types.attrsOf lib.types.bool;
+        default = { };
+        example = {
+          github = true;
+        };
+        description = ''
+          Enable curated host allowlists for common services.
+
+          Example:
+            devcontainer.network.allowedServices.github = true;
+
+          Currently supported services:
+          - github: expands to maintained GitHub hostnames and dynamically
+            loads GitHub CIDR/IP master data from https://api.github.com/meta
+            when applying the firewall
+
+          These hosts are merged with network.allowedHosts.
+          Only outbound traffic is filtered; inbound traffic is not blocked.
+
+          Unknown service keys fail evaluation with a clear error.
+          Values set to false are ignored.
         '';
       };
 
