@@ -1,5 +1,5 @@
 #!/bin/sh
-# Firewall setup for the allowed-hosts integration test fixture.
+# Firewall setup for the allowed-hosts integration test fixture (nftables).
 #
 # Allowed outbound: github.com (resolved at runtime) + loopback + DNS.
 # Everything else is blocked so the test can verify the allowlist behaviour.
@@ -9,73 +9,60 @@ if [ "$(id -u)" != "0" ]; then
   exec sudo "$0" "$@"
 fi
 
-# If iptables is not on PATH, re-exec inside a nix shell that provides it.
+# If nft is not on PATH, re-exec inside a nix shell that provides it.
 # This is safe here because the firewall hasn't been applied yet, so internet
-# access (needed by `nix shell` to fetch iptables) is still unrestricted.
-if ! command -v iptables >/dev/null 2>&1; then
+# access (needed by `nix shell` to fetch nftables) is still unrestricted.
+if ! command -v nft >/dev/null 2>&1; then
   NIX_BIN="$(command -v nix 2>/dev/null || echo /nix/var/nix/profiles/default/bin/nix)"
   if [ -x "$NIX_BIN" ]; then
-    exec "$NIX_BIN" shell nixpkgs#iptables --command sh "$0" "$@"
+    exec "$NIX_BIN" shell nixpkgs#nftables --command sh "$0" "$@"
   fi
+  echo "WARNING: nft not found and nix unavailable — outbound traffic unrestricted"
+  exit 0
 fi
 
 ALLOWED_HOSTS="github.com"
 
 # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
-#   EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
+#   sudo EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" /run/devcontainer-firewall
 if [ -n "${EXTRA_ALLOWED_HOSTS:-}" ]; then
   ALLOWED_HOSTS="$ALLOWED_HOSTS $EXTRA_ALLOWED_HOSTS"
 fi
 
-setup_ipv4() {
-  iptables -F OUTPUT
-  iptables -P OUTPUT DROP
-  # Loopback always allowed
-  iptables -A OUTPUT -o lo -j ACCEPT
-  # DNS (port 53) so hostname resolution works
-  iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-  iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-  # Already-established connections (e.g. replies to inbound)
-  iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  # Resolve each allowed hostname and add a per-IP rule
-  for host in $ALLOWED_HOSTS; do
-    for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-      iptables -A OUTPUT -d "$ip" -j ACCEPT
-      echo "  ipv4 allowed: $host -> $ip"
-    done
-  done
-}
-
-setup_ipv6() {
-  ip6tables -F OUTPUT
-  ip6tables -P OUTPUT DROP
-  ip6tables -A OUTPUT -o lo -j ACCEPT
-  ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT
-  ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-  ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  for host in $ALLOWED_HOSTS; do
-    for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-      ip6tables -A OUTPUT -d "$ip" -j ACCEPT
-      echo "  ipv6 allowed: $host -> $ip"
-    done
-  done
-}
-
 echo "Applying devcontainer-firewall (test fixture — github.com allowed)..."
 
-if command -v iptables >/dev/null 2>&1; then
-  setup_ipv4
-  echo "IPv4 rules applied."
-else
-  echo "WARNING: iptables not found, IPv4 traffic unrestricted"
-fi
+# Remove any previous incarnation of this table so the script is idempotent.
+nft delete table inet devcontainer 2>/dev/null || true
 
-if command -v ip6tables >/dev/null 2>&1; then
-  setup_ipv6
-  echo "IPv6 rules applied."
-else
-  echo "WARNING: ip6tables not found, IPv6 traffic unrestricted"
-fi
+# Build the base ruleset in our own named table.
+nft add table inet devcontainer
+nft add chain inet devcontainer output \
+  '{ type filter hook output priority 0; policy drop; }'
+# Loopback always allowed.
+nft add rule inet devcontainer output oif lo accept
+# DNS (port 53) so hostname resolution works.
+nft add rule inet devcontainer output udp dport 53 accept
+nft add rule inet devcontainer output tcp dport 53 accept
+# Already-established connections (e.g. replies to inbound).
+nft add rule inet devcontainer output ct state established,related accept
+
+# Named sets for allowed addresses.
+nft add set inet devcontainer allowed4 '{ type ipv4_addr; }'
+nft add set inet devcontainer allowed6 '{ type ipv6_addr; }'
+nft add rule inet devcontainer output ip  daddr @allowed4 accept
+nft add rule inet devcontainer output ip6 daddr @allowed6 accept
+
+# Resolve each allowed hostname and populate the sets.
+for host in $ALLOWED_HOSTS; do
+  for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+    nft add element inet devcontainer allowed4 "{ $ip }"
+    echo "  allowed: $host -> $ip"
+  done
+  for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+    nft add element inet devcontainer allowed6 "{ $ip }"
+    echo "  allowed: $host -> $ip"
+  done
+done
 
 echo "Firewall ready."
 

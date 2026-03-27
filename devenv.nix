@@ -10,125 +10,36 @@ let
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = true;
   };
+  allServices = import ./services;
   cfg = config.devcontainer;
+  firewall = import ./devcontainer-firewall.nix {
+    inherit pkgs lib cfg;
+  };
+  inherit (firewall)
+    firewallEnabled
+    firewallScript
+    ;
   settingsFormat = pkgs.formats.json { };
 
   # Fetch each vsix into the Nix store at build time
-  vsixFetched = map
-    (entry:
-      let
-        url = if builtins.isAttrs entry then entry.url else entry;
-        sha256 = if builtins.isAttrs entry && entry ? sha256 then entry.sha256 else null;
-        fetched = if sha256 != null
-          then builtins.fetchurl { inherit url sha256; }
-          else builtins.fetchurl url;
-        filename = lib.last (lib.splitString "/" url);
-      in {
-        storePath = fetched;
-        containerPath = "/run/host-vsix/${filename}";
-        mount = "source=${fetched},target=/run/host-vsix/${filename},type=bind,readonly";
-      }
-    )
-    cfg.vsix;
+  vsixFetched = map (
+    entry:
+    let
+      url = if builtins.isAttrs entry then entry.url else entry;
+      sha256 = if builtins.isAttrs entry && entry ? sha256 then entry.sha256 else null;
+      fetched =
+        if sha256 != null then builtins.fetchurl { inherit url sha256; } else builtins.fetchurl url;
+      filename = lib.last (lib.splitString "/" url);
+    in
+    {
+      storePath = fetched;
+      containerPath = "/run/host-vsix/${filename}";
+      mount = "source=${fetched},target=/run/host-vsix/${filename},type=bind,readonly";
+    }
+  ) cfg.vsix;
 
   vsixMounts = map (e: e.mount) vsixFetched;
   vsixContainerPaths = map (e: e.containerPath) vsixFetched;
-
-  # Generate iptables/ip6tables allowlist firewall script for network.allowedHosts.
-  # Stored in the Nix store on the host and bind-mounted into the container at
-  # /run/devcontainer-firewall via the mounts list (see computedSettings below).
-  firewallScript =
-    let
-      isCidr = s: builtins.match ".*/.*" s != null;
-      hosts = lib.filter (s: !isCidr s) cfg.network.allowedHosts;
-      cidrs = lib.filter isCidr cfg.network.allowedHosts;
-      hostsStr = lib.concatStringsSep " " hosts;
-      cidrsStr = lib.concatStringsSep " " cidrs;
-    in
-    pkgs.writeScript "devcontainer-firewall" ''
-      #!/bin/sh
-      # Devcontainer outbound network allowlist.
-      # Self-escalate to root; the vscode user has passwordless sudo in devcontainer images.
-      if [ "$(id -u)" != "0" ]; then
-        exec sudo "$0" "$@"
-      fi
-
-      ALLOWED_HOSTS="${hostsStr}"
-      ALLOWED_CIDRS="${cidrsStr}"
-
-      # In dev mode, allow extra hosts to be injected at runtime without a rebuild:
-      #   EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
-      if [ -n "''${EXTRA_ALLOWED_HOSTS:-}" ]; then
-        ALLOWED_HOSTS="$ALLOWED_HOSTS ''${EXTRA_ALLOWED_HOSTS}"
-      fi
-      setup_ipv4() {
-        iptables -F OUTPUT
-        iptables -P OUTPUT DROP
-        iptables -A OUTPUT -o lo -j ACCEPT
-        iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-        iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-        iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        for host in $ALLOWED_HOSTS; do
-          for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-            iptables -A OUTPUT -d "$ip" -j ACCEPT
-            echo "  ipv4 allowed: $host -> $ip"
-          done
-        done
-        for cidr in $ALLOWED_CIDRS; do
-          case "$cidr" in
-            *:*) ;;
-            *) iptables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv4 allowed: CIDR $cidr" ;;
-          esac
-        done
-      }
-
-      setup_ipv6() {
-        ip6tables -F OUTPUT
-        ip6tables -P OUTPUT DROP
-        ip6tables -A OUTPUT -o lo -j ACCEPT
-        ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT
-        ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-        ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        for host in $ALLOWED_HOSTS; do
-          for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-            ip6tables -A OUTPUT -d "$ip" -j ACCEPT
-            echo "  ipv6 allowed: $host -> $ip"
-          done
-        done
-        for cidr in $ALLOWED_CIDRS; do
-          case "$cidr" in
-            *:*) ip6tables -A OUTPUT -d "$cidr" -j ACCEPT; echo "  ipv6 allowed: CIDR $cidr" ;;
-          esac
-        done
-      }
-
-      echo "Applying devcontainer network allowlist..."
-      if command -v iptables >/dev/null 2>&1; then
-        setup_ipv4
-        echo "IPv4 rules applied."
-      else
-        echo "WARNING: iptables not found, IPv4 traffic unrestricted"
-      fi
-      if command -v ip6tables >/dev/null 2>&1; then
-        setup_ipv6
-        echo "IPv6 rules applied."
-      else
-        echo "WARNING: ip6tables not found, IPv6 traffic unrestricted"
-      fi
-      echo "Network allowlist applied."
-
-      # Remove passwordless sudo so the container user cannot modify the rules.
-      # Skipped in dev mode to allow manual rule tweaking.
-      ${lib.optionalString (!cfg.network.dev) ''
-        if [ -f /etc/sudoers.d/vscode ]; then
-          rm -f /etc/sudoers.d/vscode
-          echo "Passwordless sudo removed."
-        fi
-      ''}
-      ${lib.optionalString cfg.network.dev ''
-        echo "Dev mode: passwordless sudo kept. Re-run with EXTRA_ALLOWED_HOSTS to add hosts."
-      ''}
-    '';
 
   # Compute final settings with tweaks applied
   computedSettings =
@@ -165,11 +76,13 @@ let
       };
 
       # Apply podman/rootless tweaks
-      podmanSettings = lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks) {
-        containerUser = "vscode";
-        containerEnv.HOME = "/home/vscode";
-        runArgs = [ "--userns=keep-id" ];
-      };
+      podmanSettings =
+        lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks)
+          {
+            containerUser = "vscode";
+            containerEnv.HOME = "/home/vscode";
+            runArgs = [ "--userns=keep-id" ];
+          };
 
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.networkMode == "host") {
@@ -181,50 +94,64 @@ let
         runArgs = [ "--network=none" ];
       };
 
+      # Apply named network mode
+      isNamedNetwork = cfg.networkMode == "named";
+      namedNetworkSettings = lib.optionalAttrs isNamedNetwork (
+        assert lib.assertMsg (
+          cfg.networkName != null
+        ) "devcontainer.networkName must be set when networkMode = \"named\"";
+        {
+          runArgs = [ "--network=${cfg.networkName}" ];
+        }
+      );
+
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if cfg.network.allowedHosts != [] && cfg.networkMode != "bridge"
-        then throw "devcontainer.network.allowedHosts requires networkMode = \"bridge\""
-        else lib.optional (cfg.network.allowedHosts != [])
-          "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
+        if firewallEnabled && cfg.networkMode == "host" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"host\""
+        else if firewallEnabled && cfg.networkMode == "none" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"none\""
+        else
+          lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
 
-      firewallRunArgs = lib.optional (cfg.network.allowedHosts != []) "--cap-add=NET_ADMIN";
+      firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
-        lib.recursiveUpdate (
-          lib.recursiveUpdate (
-            lib.recursiveUpdate (
-              lib.recursiveUpdate (
-                lib.recursiveUpdate gpgSettings netrcSettings
-              ) passSettings
-            ) podmanSettings
-          ) hostNetworkSettings
-        ) noneNetworkSettings
+        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) passSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings
       );
 
       # Special handling for lists - concatenate instead of replace
-      finalMounts = (baseSettings.mounts or [])
-        ++ (gpgSettings.mounts or [])
-        ++ (netrcSettings.mounts or [])
-        ++ (passSettings.mounts or [])
+      finalMounts =
+        (baseSettings.mounts or [ ])
+        ++ (gpgSettings.mounts or [ ])
+        ++ (netrcSettings.mounts or [ ])
+        ++ (passSettings.mounts or [ ])
         ++ vsixMounts
         ++ firewallMounts;
 
-      finalRunArgs = (baseSettings.runArgs or [])
-        ++ (podmanSettings.runArgs or [])
-        ++ (hostNetworkSettings.runArgs or [])
-        ++ (noneNetworkSettings.runArgs or [])
+      finalRunArgs =
+        (baseSettings.runArgs or [ ])
+        ++ (podmanSettings.runArgs or [ ])
+        ++ (hostNetworkSettings.runArgs or [ ])
+        ++ (noneNetworkSettings.runArgs or [ ])
+        ++ (namedNetworkSettings.runArgs or [ ])
         ++ firewallRunArgs;
 
-      finalContainerEnv = (baseSettings.containerEnv or {})
-        // (podmanSettings.containerEnv or {})
-        // (netrcSettings.containerEnv or {});
+      finalContainerEnv =
+        (baseSettings.containerEnv or { })
+        // (podmanSettings.containerEnv or { })
+        // (netrcSettings.containerEnv or { });
 
-      finalRemoteEnv = (baseSettings.remoteEnv or {})
-        // (gpgSettings.remoteEnv or {});
+      finalRemoteEnv = (baseSettings.remoteEnv or { }) // (gpgSettings.remoteEnv or { });
 
-      finalOnCreateCommand = netrcSettings.onCreateCommand or (if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then baseSettings.onCreateCommand else "");
+      finalOnCreateCommand =
+        netrcSettings.onCreateCommand or (
+          if baseSettings ? onCreateCommand && baseSettings.onCreateCommand != null then
+            baseSettings.onCreateCommand
+          else
+            ""
+        );
 
       # Concatenate all postStartCommand sources: user base, gpg-agent, firewall.
       # This also fixes the pre-existing issue where gpg-agent would overwrite the
@@ -234,58 +161,57 @@ let
           parts = lib.filter (p: p != null && p != "") [
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
-          (if cfg.network.allowedHosts != [] then
-            (if cfg.network.dev then "FIREWALL_DEV=1 sudo /run/devcontainer-firewall"
-             else "sudo /run/devcontainer-firewall")
-          else null)
+            (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
           ];
         in
-        if parts != [] then lib.concatStringsSep " && " parts else null;
+        if parts != [ ] then lib.concatStringsSep " && " parts else null;
 
     in
-      (lib.removeAttrs mergedSettings [ "onCreateCommand" "postCreateCommand" "postStartCommand" ])
-      // lib.optionalAttrs (finalPostStartCommand != null) {
-        postStartCommand = finalPostStartCommand;
-      }
-      // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
-        postCreateCommand = mergedSettings.postCreateCommand;
-      }
-      // {
-        mounts = finalMounts;
-        runArgs = finalRunArgs;
-        containerEnv = finalContainerEnv;
-        remoteEnv = finalRemoteEnv;
-      }
-      // lib.optionalAttrs (finalOnCreateCommand != null && finalOnCreateCommand != "") {
-        onCreateCommand = finalOnCreateCommand;
-      };
+    (lib.removeAttrs mergedSettings [
+      "onCreateCommand"
+      "postCreateCommand"
+      "postStartCommand"
+    ])
+    // lib.optionalAttrs (finalPostStartCommand != null) {
+      postStartCommand = finalPostStartCommand;
+    }
+    // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
+      postCreateCommand = mergedSettings.postCreateCommand;
+    }
+    // {
+      mounts = finalMounts;
+      runArgs = finalRunArgs;
+      containerEnv = finalContainerEnv;
+      remoteEnv = finalRemoteEnv;
+    }
+    // lib.optionalAttrs (finalOnCreateCommand != null && finalOnCreateCommand != "") {
+      onCreateCommand = finalOnCreateCommand;
+    };
 
   devcontainerSettings =
     let
       # Get the default extensions and user extensions
-      defaultExtensions = [];
+      defaultExtensions = [ ];
       userExtensions = computedSettings.customizations.vscode.extensions or [ ];
       # Merge extensions: defaults + user extensions + vsix container paths, then remove vscodevim.vim
       allExtensions = lib.unique (defaultExtensions ++ userExtensions ++ vsixContainerPaths);
       filteredExtensions = lib.filter (ext: ext != "vscodevim.vim") allExtensions;
 
       # Then apply customizations that need special handling
-      finalSettings =
-        computedSettings
-        // {
-          customizations = computedSettings.customizations // {
-            vscode =
-              computedSettings.customizations.vscode
-              // {
-                extensions = filteredExtensions;
-              }
-              // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
-                settings = computedSettings.customizations.vscode.settings or { } // {
-                  "remote.autoForwardPorts" = false;
-                };
+      finalSettings = computedSettings // {
+        customizations = computedSettings.customizations // {
+          vscode =
+            computedSettings.customizations.vscode
+            // {
+              extensions = filteredExtensions;
+            }
+            // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
+              settings = computedSettings.customizations.vscode.settings or { } // {
+                "remote.autoForwardPorts" = false;
               };
-          };
+            };
         };
+      };
     in
     finalSettings;
   file = settingsFormat.generate "devcontainer.json" devcontainerSettings;
@@ -365,10 +291,17 @@ in
     };
 
     vsix = lib.mkOption {
-      type = lib.types.listOf (lib.types.either lib.types.str (lib.types.submodule {
-        options.url = lib.mkOption { type = lib.types.str; };
-        options.sha256 = lib.mkOption { type = lib.types.str; default = ""; };
-      }));
+      type = lib.types.listOf (
+        lib.types.either lib.types.str (
+          lib.types.submodule {
+            options.url = lib.mkOption { type = lib.types.str; };
+            options.sha256 = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+            };
+          }
+        )
+      );
       default = [ ];
       description = ''
         List of .vsix extension files to fetch into the Nix store at build time
@@ -382,13 +315,28 @@ in
         "bridge"
         "host"
         "none"
+        "named"
       ];
       default = "bridge";
       description = ''
         Network mode for the container.
-        - "bridge": Use default network mode
+        - "bridge": Use the default bridge network (default)
         - "host": Use host networking (shares the host's network namespace)
         - "none": Disable all networking (complete isolation)
+        - "named": Join a named Docker/Podman network specified by networkName.
+          Two devcontainers using the same name share that network and can
+          reach each other by container name. The network must be pre-created
+          before starting the container (e.g. `docker network create my-net`).
+      '';
+    };
+
+    networkName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "my-project-net";
+      description = ''
+        Name of the Docker/Podman network to join when networkMode = "named".
+        Must be set whenever networkMode = "named".
       '';
     };
 
@@ -399,7 +347,10 @@ in
         description = ''
           List of hostnames, IP addresses, or CIDR ranges the container is
           allowed to connect to outbound. When non-empty, all other outbound
-          connections are blocked via iptables/ip6tables inside the container.
+          connections are blocked via nftables inside the container.
+
+          Only outbound traffic is filtered; inbound traffic is not blocked.
+          This keeps published/forwarded devcontainer service ports reachable.
 
           Requires networkMode = "bridge". Each entry is either:
           - a hostname (e.g. "github.com") — resolved at container start via getent
@@ -413,18 +364,38 @@ in
         '';
       };
 
-      dev = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
+      allowedServices = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.enum [
+            "azure"
+            "claude"
+            "dockerhub"
+            "elm"
+            "github"
+            "gitlab"
+            "go"
+            "google"
+            "haskell"
+            "java"
+            "nix"
+            "npm"
+            "openai"
+            "python"
+          ]
+        );
+        default = [ ];
+        example = [
+          "github"
+          "openai"
+        ];
         description = ''
-          Enable dev mode for the network allowlist firewall.
-          When true:
-          - Passwordless sudo is NOT removed after the firewall is applied,
-            so you can re-run the script manually to tweak rules.
-          - The firewall script respects the EXTRA_ALLOWED_HOSTS environment
-            variable, letting you add hosts at runtime without a Nix rebuild:
-              EXTRA_ALLOWED_HOSTS="pypi.org npmjs.com" sudo /run/devcontainer-firewall
-          Only meaningful when allowedHosts is non-empty.
+          Enable curated outbound host allowlists for well-known services.
+          Each name adds a hardcoded set of hostnames (and CIDRs for github)
+          to the firewall allowlist. Service definitions live in the
+          services/ directory of this module.
+
+          These are merged with network.allowedHosts.
+          Only outbound traffic is filtered; inbound traffic is not blocked.
         '';
       };
     };
@@ -547,13 +518,12 @@ in
       ++ (optionals (lib.elem "vscode" cfg.tweaks) [
         (pkgs-devcontainer.vscode-with-extensions.override {
           vscode = pkgs-devcontainer.vscode;
-          vscodeExtensions =
-            [
-              pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
-            ]
-            ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
-              pkgs-devcontainer.vscode-extensions.vscodevim.vim
-            ];
+          vscodeExtensions = [
+            pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
+          ]
+          ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
+            pkgs-devcontainer.vscode-extensions.vscodevim.vim
+          ];
         })
       ])
       ++ (optionals (lib.elem "podman" cfg.tweaks) [
@@ -567,12 +537,11 @@ in
       ++ (optionals (lib.elem "cli" cfg.tweaks) [
         pkgs-devcontainer.devcontainer
       ]);
-    enterShell =
-      ''
-        cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
-      ''
-      + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
-        ${podmanSetupScript}
-      '');
+    enterShell = ''
+      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
+    ''
+    + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
+      ${podmanSetupScript}
+    '');
   };
 }

@@ -187,6 +187,13 @@ run_test "api.openai.com HTTPS blocked (not in allowlist)" \
   "curl -sf --connect-timeout 5 --max-time 6 https://api.openai.com >/dev/null"
 
 echo ""
+echo -e "${BOLD}--- Inbound safety ---${NC}"
+
+run_test "firewall does not install INPUT hook (inbound remains runtime default)" \
+  "fail" \
+  "nft list table inet devcontainer | grep -q 'hook input'"
+
+echo ""
 echo -e "${BOLD}--- Security: sudo removal ---${NC}"
 
 if [ -n "$DEV" ]; then
@@ -196,9 +203,9 @@ else
     "fail" \
     "sudo true 2>/dev/null"
 
-  run_test "cannot flush iptables rules without sudo" \
+  run_test "cannot delete nftables table without sudo" \
     "fail" \
-    "iptables -F OUTPUT 2>/dev/null || sudo iptables -F OUTPUT 2>/dev/null"
+    "nft delete table inet devcontainer 2>/dev/null || sudo nft delete table inet devcontainer 2>/dev/null"
 fi
 
 # ---------------------------------------------------------------------------
@@ -207,17 +214,9 @@ fi
 
 echo ""
 echo -e "${BOLD}--- Firewall state (informational) ---${NC}"
-echo "  IPv4 OUTPUT chain:"
 # shellcheck disable=SC2086
 devcontainer exec $DOCKER_PATH_ARG --workspace-folder "$FIXTURE_DIR" -- \
-  sh -c "nix shell nixpkgs#iptables --command iptables -L OUTPUT -n --line-numbers 2>/dev/null || iptables -L OUTPUT -n --line-numbers 2>/dev/null || echo '  (iptables not available)'" \
-  2>/dev/null | sed 's/^/    /' || true
-
-echo ""
-echo "  IPv6 OUTPUT chain:"
-# shellcheck disable=SC2086
-devcontainer exec $DOCKER_PATH_ARG --workspace-folder "$FIXTURE_DIR" -- \
-  sh -c "nix shell nixpkgs#iptables --command ip6tables -L OUTPUT -n --line-numbers 2>/dev/null || ip6tables -L OUTPUT -n --line-numbers 2>/dev/null || echo '  (ip6tables not available)'" \
+  sh -c "nft list ruleset 2>/dev/null || echo '  (nft not available or no rules)'" \
   2>/dev/null | sed 's/^/    /' || true
 
 # ---------------------------------------------------------------------------
