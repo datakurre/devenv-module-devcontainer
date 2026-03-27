@@ -367,16 +367,20 @@ in
       allowedServices = lib.mkOption {
         type = lib.types.listOf (
           lib.types.enum [
-            "anthropic"
-            "cachix"
+            "azure"
+            "claude"
             "dockerhub"
+            "elm"
             "github"
             "gitlab"
+            "go"
             "google"
-            "nixpkgs"
+            "haskell"
+            "java"
+            "nix"
             "npm"
             "openai"
-            "pypi"
+            "python"
           ]
         );
         default = [ ];

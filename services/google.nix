@@ -4,6 +4,7 @@
   hosts = [
     "accounts.google.com"           # OAuth 2.0 / OIDC authentication
     "oauth2.googleapis.com"         # OAuth token endpoint
+    "www.googleapis.com"            # REST discovery / fallback endpoint used by GCP client libraries
     "iam.googleapis.com"            # IAM API
     "storage.googleapis.com"        # Google Cloud Storage JSON API
     "storage-download.googleapis.com" # GCS media / resumable download

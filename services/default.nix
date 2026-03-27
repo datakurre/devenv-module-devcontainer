@@ -3,14 +3,18 @@
 # Imported by devcontainer-firewall.nix (to build nft rules) and by
 # devenv.nix (to derive the enum type for allowedServices).
 {
-  anthropic = import ./anthropic.nix;
-  cachix    = import ./cachix.nix;
+  azure     = import ./azure.nix;
+  claude    = import ./claude.nix;
   dockerhub = import ./dockerhub.nix;
+  elm       = import ./elm.nix;
   github    = import ./github.nix;
   gitlab    = import ./gitlab.nix;
+  go        = import ./go.nix;
   google    = import ./google.nix;
-  nixpkgs   = import ./nixpkgs.nix;
+  haskell   = import ./haskell.nix;
+  java      = import ./java.nix;
+  nix       = import ./nix.nix;
   npm       = import ./npm.nix;
   openai    = import ./openai.nix;
-  pypi      = import ./pypi.nix;
+  python    = import ./python.nix;
 }

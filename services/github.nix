@@ -30,6 +30,7 @@
     "uploads.github.com"
     "ghcr.io"          # GitHub Container Registry
     "pkg.github.com"   # GitHub Packages (npm, Maven, …)
+    "api.business.githubcopilot.com"  # GitHub Copilot API
   ];
 
   cidrs = [
