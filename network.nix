@@ -46,7 +46,9 @@
       - a bare IP address (e.g. "192.168.1.10")
       - a CIDR range (e.g. "10.0.0.0/8", "2001:db8::/32")
 
-      Loopback, DNS (port 53), and already-established connections are
+      Loopback, DNS (port 53), the nameservers listed in /etc/resolv.conf
+      (added implicitly so DoT/DoH reaches the configured resolver),
+      and already-established connections are
       always permitted regardless of this list.
 
       Adds --cap-add=NET_ADMIN to runArgs automatically.
@@ -88,22 +90,4 @@
     '';
   };
 
-  removeSudo = lib.mkOption {
-    type = lib.types.bool;
-    default = false;
-    description = ''
-      Whether to remove the passwordless sudo entry (/etc/sudoers.d/vscode)
-      after the firewall rules are applied.
-
-      When true, the container user loses the ability to escalate to
-      root via sudo after startup. This is the recommended security
-      posture when using an outbound firewall, as it prevents the
-      container user from modifying the nftables rules.
-
-      Works independently of the firewall: can be used on its own to
-      harden the container even without allowedHosts/allowedServices.
-
-      When false (the default), passwordless sudo is kept.
-    '';
-  };
 }

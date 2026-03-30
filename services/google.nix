@@ -1,8 +1,6 @@
 # Google allowlist — googleapis.com, GCS, GCR, Artifact Registry, and OAuth.
 # Covers the most common Google Cloud client operations from a devcontainer.
 #
-# Hosts: key Google hostnames for auth, storage, container registries, and APIs.
-#
 # CIDRs: all IPv4 prefixes from the Google IP ranges JSON feed (goog.json).
 #        This covers Google's entire routable address space including GCP,
 #        Workspace, and other Google services.
@@ -18,19 +16,9 @@
 #   print('# syncToken:', d.get('syncToken'), '  creationTime:', d.get('creationTime'))
 #   for c in cidrs: print(c)"
 {
-  hosts = [
-    "google.com"                    # Google search
-    "www.google.com"                # Google search
-    "accounts.google.com"           # OAuth 2.0 / OIDC authentication
-    "oauth2.googleapis.com"         # OAuth token endpoint
-    "www.googleapis.com"            # REST discovery / fallback endpoint used by GCP client libraries
-    "iam.googleapis.com"            # IAM API
-    "storage.googleapis.com"        # Google Cloud Storage JSON API
-    "storage-download.googleapis.com" # GCS media / resumable download
-    "gcr.io"                        # Google Container Registry (legacy)
-    "pkg.dev"                       # Artifact Registry (all regions resolve here)
-    "www.gstatic.com"               # Google APIs client library dependencies
-  ];
+  # All Google hostnames resolve to IPs within the CIDRs below (Google's full
+  # routable address space), so no separate host entries are needed.
+  hosts = [];
 
   # syncToken: 1774857872875  creationTime: 2026-03-30T01:04:32.875286
   cidrs = [

@@ -1,7 +1,5 @@
 # GitHub allowlist — hostnames and IP ranges for github.com and its CDN.
 #
-# Hosts: key GitHub hostnames resolved via getent at container start.
-#
 # CIDRs: full IP range union of categories web, api, git, hooks, pages,
 #        packages, copilot, services, dependabot from the GitHub meta endpoint.
 #        GitHub Actions Azure ranges are intentionally excluded — they are
@@ -20,18 +18,9 @@
 #   cidrs=sorted(set(c for k in cats for c in d.get(k,[])))
 #   for c in cidrs: print(c)"
 {
-  hosts = [
-    "github.com"
-    "api.github.com"
-    "raw.githubusercontent.com"
-    "objects.githubusercontent.com"
-    "githubusercontent.com"
-    "codeload.github.com"
-    "uploads.github.com"
-    "ghcr.io"          # GitHub Container Registry
-    "pkg.github.com"   # GitHub Packages (npm, Maven, …)
-    "api.business.githubcopilot.com"  # GitHub Copilot API
-  ];
+  # All GitHub hostnames resolve to IPs within the CIDRs below, so no
+  # separate host entries are needed — the CIDR rules cover everything.
+  hosts = [];
 
   cidrs = [
     # ── GitHub-owned network blocks (stable) ──────────────────────────────

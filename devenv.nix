@@ -97,7 +97,7 @@ let
           throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"none\""
         else
           lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly"
-          ++ lib.optional cfg.network.removeSudo "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly";
+          ++ lib.optional firewallEnabled "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly";
 
       firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
@@ -138,14 +138,16 @@ let
             ""
         );
 
-      # When removeSudo is enabled, install a targeted sudoers rule during
+      # When the firewall is enabled, install a targeted sudoers rule during
       # postCreateCommand so the firewall can still be re-applied on restart via
       # `sudo /run/devcontainer-firewall` even after the general sudo is removed.
+      # /run/devcontainer-remove-sudo is also included so it can self-escalate on
+      # subsequent container starts (after the general vscode sudo has been removed).
       finalPostCreateCommand =
         let
           firewallSudoersCmd =
-            if firewallEnabled && cfg.network.removeSudo then
-              "echo 'vscode ALL=(root) NOPASSWD: /run/devcontainer-firewall' | sudo tee /etc/sudoers.d/devcontainer-firewall > /dev/null && sudo chmod 440 /etc/sudoers.d/devcontainer-firewall"
+            if firewallEnabled then
+              "printf 'vscode ALL=(root) NOPASSWD: /run/devcontainer-firewall\nvscode ALL=(root) NOPASSWD: /run/devcontainer-remove-sudo\n' | sudo tee /etc/sudoers.d/devcontainer-firewall > /dev/null && sudo chmod 440 /etc/sudoers.d/devcontainer-firewall"
             else
               null;
           parts = lib.filter (p: p != null && p != "") [
@@ -164,7 +166,7 @@ let
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
             (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
-            (if cfg.network.removeSudo then "/run/devcontainer-remove-sudo" else null)
+            (if firewallEnabled then "/run/devcontainer-remove-sudo" else null)
           ];
         in
         if parts != [ ] then lib.concatStringsSep " && " parts else null;

@@ -85,18 +85,9 @@ let
       nft add rule inet devcontainer output ip  daddr @allowed4 accept
       nft add rule inet devcontainer output ip6 daddr @allowed6 accept
 
-      # Resolve each hostname and populate the sets.
-      for host in $ALLOWED_HOSTS; do
-        for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-          nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
-          echo "  allowed: $host -> $ip"
-        done
-        for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-          nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
-          echo "  allowed: $host -> $ip"
-        done
-      done
-
+      # Add CIDR ranges first so that host IPs within a CIDR don't produce
+      # "overlapping interval" errors that would silently prevent the broader
+      # prefix from landing in the set.
       # Add CIDR ranges directly to the appropriate set.
       for cidr in $ALLOWED_CIDRS; do
         case "$cidr" in
@@ -104,6 +95,24 @@ let
           *)   nft add element inet devcontainer allowed4 "{ $cidr }" 2>/dev/null || true; echo "  allowed: CIDR $cidr" ;;
         esac
       done
+
+      # Implicitly allow all nameservers listed in /etc/resolv.conf so that
+      # DNS-over-TLS (port 853), DNS-over-HTTPS (port 443), and any other
+      # non-standard resolver mechanism can still reach the configured
+      # nameservers.  Plain port-53 traffic is already unconditionally
+      # permitted above, but adding the IPs to the allowed sets covers every
+      # port/protocol to those trusted hosts.
+      if [ -f /etc/resolv.conf ]; then
+        for ns in $(awk '/^nameserver[[:space:]]/ { print $2 }' /etc/resolv.conf); do
+          case "$ns" in
+            127.*|::1) ;;  # loopback already accepted via oif lo rule
+            *:*) nft add element inet devcontainer allowed6 "{ $ns }" 2>/dev/null || true
+                 echo "  allowed: nameserver $ns (resolv.conf)" ;;
+            *)   nft add element inet devcontainer allowed4 "{ $ns }" 2>/dev/null || true
+                 echo "  allowed: nameserver $ns (resolv.conf)" ;;
+          esac
+        done
+      fi
 
       echo "Network allowlist applied."
 
