@@ -18,6 +18,7 @@ let
   inherit (firewall)
     firewallEnabled
     firewallScript
+    profileScript
     removeSudoScript
     ;
   settingsFormat = pkgs.formats.json { };
@@ -97,7 +98,8 @@ let
           throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"none\""
         else
           lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly"
-          ++ lib.optional firewallEnabled "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly";
+          ++ lib.optional firewallEnabled "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly"
+          ++ lib.optional firewallEnabled "source=${profileScript},target=/etc/profile.d/devcontainer-firewall.sh,type=bind,readonly";
 
       firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
@@ -150,9 +152,19 @@ let
               "printf 'vscode ALL=(root) NOPASSWD: /run/devcontainer-firewall\nvscode ALL=(root) NOPASSWD: /run/devcontainer-remove-sudo\n' | sudo tee /etc/sudoers.d/devcontainer-firewall > /dev/null && sudo chmod 440 /etc/sudoers.d/devcontainer-firewall"
             else
               null;
+          # VS Code terminals are non-login shells, so /etc/profile.d/ is not
+          # sourced automatically. Append a line to /etc/bash.bashrc so that
+          # the firewall refresh and fw-refresh alias are available in every
+          # interactive bash session (login and non-login alike).
+          firewallBashrcCmd =
+            if firewallEnabled then
+              "grep -qF 'devcontainer-firewall.sh' /etc/bash.bashrc || echo '. /etc/profile.d/devcontainer-firewall.sh' | sudo tee -a /etc/bash.bashrc > /dev/null"
+            else
+              null;
           parts = lib.filter (p: p != null && p != "") [
             (mergedSettings.postCreateCommand or null)
             firewallSudoersCmd
+            firewallBashrcCmd
           ];
         in
         if parts != [ ] then lib.concatStringsSep " && " parts else null;

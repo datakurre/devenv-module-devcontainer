@@ -158,24 +158,21 @@ let
             echo "  warning: host $host did not resolve"
           fi
         done
-        (
-          sleep 10
-          while true; do
-            for host in $ALLOWED_HOSTS; do
-              for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-                nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
-              done
-              for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-                nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
-              done
-            done
-            sleep 300
-          done
-        ) &
-        echo "DNS refresh loop started (every 300s)."
       fi
 
     '';
+
+  # Sourced by every new shell via /etc/profile.d/. Re-resolves hostnames and
+  # refreshes the nftables allowlist, replacing the old background DNS loop.
+  # Also defines `fw-refresh` as a convenient alias.
+  profileScript = pkgs.writeText "devcontainer-firewall-profile" ''
+    # Refresh the devcontainer outbound-firewall IP allowlist on each new shell.
+    sudo /run/devcontainer-firewall > /dev/null 2>&1
+    if [ -n "''${BASH_VERSION-}" ]; then
+      # shellcheck disable=SC2139
+      alias fw-refresh='sudo /run/devcontainer-firewall'
+    fi
+  '';
 
   removeSudoScript = pkgs.writeScript "devcontainer-remove-sudo" ''
     #!/bin/sh
@@ -192,6 +189,7 @@ in
   inherit
     firewallEnabled
     firewallScript
+    profileScript
     removeSudoScript
     ;
 }
