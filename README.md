@@ -116,9 +116,9 @@ devenv shell
 |--------|--------|-------------|
 | `enable` | `true`, `false` | Enable `.devcontainer.json` generation |
 | `tweaks` | `rootless`, `podman`, `vscode`, `gpg-agent`, `netrc`, `pass`, `cli` | `rootless`: rootless Podman config; `podman`: Nix-provided Podman; `vscode`: Nix-provided VS Code; `gpg-agent`: bind-mounts host gpg-agent socket into container; `netrc`: mounts `.netrc` into container (requires `netrc` option); `pass`: mounts `$HOME/.password-store` into container; `cli`: installs the devcontainer CLI (`@devcontainers/cli`) on the host shell |
-| `networkMode` | `bridge`, `host`, `none`, `named` | `bridge` (default): standard container networking; `host`: shares the host network namespace; `none`: disables all networking (complete isolation); `named`: joins the Docker/Podman network specified by `networkName` |
-| `networkName` | string | Name of the Docker/Podman network to join. Required when `networkMode = "named"`. The network must be pre-created before starting the container (e.g. `docker network create my-net`). Two devcontainers using the same name share that network and can reach each other by container name. |
-| `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via nftables. Compatible with `networkMode = "bridge"` or `"named"`. Loopback and DNS are always allowed. Inbound traffic is not filtered. |
+| `network.mode` | `bridge`, `host`, `none`, `named` | `bridge` (default): standard container networking; `host`: shares the host network namespace; `none`: disables all networking (complete isolation); `named`: joins the Docker/Podman network specified by `network.name` |
+| `network.name` | string | Name of the Docker/Podman network to join. Required when `network.mode = "named"`. The network must be pre-created before starting the container (e.g. `docker network create my-net`). Two devcontainers using the same name share that network and can reach each other by container name. |
+| `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via nftables. Compatible with `network.mode = "bridge"` or `"named"`. Loopback and DNS are always allowed. Inbound traffic is not filtered. |
 | `network.allowedServices` | list of strings | Service shortcuts that expand to curated host allowlists. Available: `azure`, `claude`, `dockerhub`, `elm`, `github`, `gitlab`, `go`, `google`, `haskell`, `java`, `nix`, `npm`, `openai`, `python`. Merged with `network.allowedHosts`. Inbound traffic is not filtered. |
 | `netrc` | path | Path to `.netrc` file to mount. Required when using the `netrc` tweak |
 | `settings` | any | Pass-through to `devcontainer.json` |
@@ -132,7 +132,7 @@ Two independent controls are provided:
 | Goal | Setting |
 |------|---------|
 | Restrict outbound to a specific allowlist | `network.allowedHosts` and/or `network.allowedServices` |
-| Block all networking completely | `networkMode = "none"` |
+| Block all networking completely | `network.mode = "none"` |
 
 ### `network.allowedHosts` and `network.allowedServices` — outbound allowlist
 
@@ -166,7 +166,7 @@ IPv4 and IPv6 are handled separately. If `nft` is absent in the container image,
 
 Only outbound traffic is filtered (OUTPUT hook). Inbound traffic is not filtered by this firewall, so published/forwarded devcontainer service ports remain reachable.
 
-`allowedHosts`/`allowedServices` works with `networkMode = "bridge"` (the default) or `"named"`; combining either with `"host"` or `"none"` is caught at eval time with a clear error.
+`allowedHosts`/`allowedServices` works with `network.mode = "bridge"` (the default) or `"named"`; combining either with `"host"` or `"none"` is caught at eval time with a clear error.
 
 ### Security hardening: sudo removal
 
@@ -176,7 +176,7 @@ After applying the firewall rules the script removes `/etc/sudoers.d/vscode`, re
 - The user cannot escalate to root (no `sudo` or `su` without a password)
 - The firewall rules persist for the container's lifetime
 
-### `networkMode = "none"` — complete isolation
+### `network.mode = "none"` — complete isolation
 
 Sets `--network=none` on the container. No network interfaces are created at all. Use this for the strictest possible sandbox where no network access is needed.
 
@@ -228,18 +228,18 @@ Or a developer doing offline-only work:
   profiles.devcontainer.module = {
     devcontainer.enable = true;
     devcontainer.tweaks = [ "podman" "vscode" ];
-    devcontainer.networkMode = "none";
+    devcontainer.network.mode = "none";
   };
 }
 ```
 
-### `networkMode = "named"` — shared named network
+### `network.mode = "named"` — shared named network
 
 Sets `--network=<name>` on the container, joining a pre-existing Docker/Podman network by name. Two devcontainers using the same network name can communicate with each other.
 
 ```nix
-devcontainer.networkMode = "named";
-devcontainer.networkName = "my-project-net";
+devcontainer.network.mode = "named";
+devcontainer.network.name = "my-project-net";
 ```
 
 ```bash

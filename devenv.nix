@@ -85,32 +85,32 @@ let
           };
 
       # Apply host network mode
-      hostNetworkSettings = lib.optionalAttrs (cfg.networkMode == "host") {
+      hostNetworkSettings = lib.optionalAttrs (cfg.network.mode == "host") {
         runArgs = [ "--network=host" ];
       };
 
       # Apply network=none mode (complete network isolation)
-      noneNetworkSettings = lib.optionalAttrs (cfg.networkMode == "none") {
+      noneNetworkSettings = lib.optionalAttrs (cfg.network.mode == "none") {
         runArgs = [ "--network=none" ];
       };
 
       # Apply named network mode
-      isNamedNetwork = cfg.networkMode == "named";
+      isNamedNetwork = cfg.network.mode == "named";
       namedNetworkSettings = lib.optionalAttrs isNamedNetwork (
         assert lib.assertMsg (
-          cfg.networkName != null
-        ) "devcontainer.networkName must be set when networkMode = \"named\"";
+          cfg.network.name != null
+        ) "devcontainer.network.name must be set when network.mode = \"named\"";
         {
-          runArgs = [ "--network=${cfg.networkName}" ];
+          runArgs = [ "--network=${cfg.network.name}" ];
         }
       );
 
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if firewallEnabled && cfg.networkMode == "host" then
-          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"host\""
-        else if firewallEnabled && cfg.networkMode == "none" then
-          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with networkMode = \"none\""
+        if firewallEnabled && cfg.network.mode == "host" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"host\""
+        else if firewallEnabled && cfg.network.mode == "none" then
+          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"none\""
         else
           lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
 
@@ -205,7 +205,7 @@ let
             // {
               extensions = filteredExtensions;
             }
-            // lib.optionalAttrs (cfg.networkMode == "host" || cfg.networkMode == "none") {
+            // lib.optionalAttrs (cfg.network.mode == "host" || cfg.network.mode == "none") {
               settings = computedSettings.customizations.vscode.settings or { } // {
                 "remote.autoForwardPorts" = false;
               };
@@ -310,37 +310,37 @@ in
       '';
     };
 
-    networkMode = lib.mkOption {
-      type = lib.types.enum [
-        "bridge"
-        "host"
-        "none"
-        "named"
-      ];
-      default = "bridge";
-      description = ''
-        Network mode for the container.
-        - "bridge": Use the default bridge network (default)
-        - "host": Use host networking (shares the host's network namespace)
-        - "none": Disable all networking (complete isolation)
-        - "named": Join a named Docker/Podman network specified by networkName.
-          Two devcontainers using the same name share that network and can
-          reach each other by container name. The network must be pre-created
-          before starting the container (e.g. `docker network create my-net`).
-      '';
-    };
-
-    networkName = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "my-project-net";
-      description = ''
-        Name of the Docker/Podman network to join when networkMode = "named".
-        Must be set whenever networkMode = "named".
-      '';
-    };
-
     network = {
+      mode = lib.mkOption {
+        type = lib.types.enum [
+          "bridge"
+          "host"
+          "none"
+          "named"
+        ];
+        default = "bridge";
+        description = ''
+          Network mode for the container.
+          - "bridge": Use the default bridge network (default)
+          - "host": Use host networking (shares the host's network namespace)
+          - "none": Disable all networking (complete isolation)
+          - "named": Join a named Docker/Podman network specified by network.name.
+            Two devcontainers using the same name share that network and can
+            reach each other by container name. The network must be pre-created
+            before starting the container (e.g. `docker network create my-net`).
+        '';
+      };
+
+      name = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "my-project-net";
+        description = ''
+          Name of the Docker/Podman network to join when network.mode = "named".
+          Must be set whenever network.mode = "named".
+        '';
+      };
+
       allowedHosts = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
@@ -352,7 +352,7 @@ in
           Only outbound traffic is filtered; inbound traffic is not blocked.
           This keeps published/forwarded devcontainer service ports reachable.
 
-          Requires networkMode = "bridge". Each entry is either:
+          Requires network.mode = "bridge". Each entry is either:
           - a hostname (e.g. "github.com") — resolved at container start via getent
           - a bare IP address (e.g. "192.168.1.10")
           - a CIDR range (e.g. "10.0.0.0/8", "2001:db8::/32")

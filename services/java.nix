@@ -17,6 +17,7 @@
     "services.gradle.org"      # Gradle build scans / Develocity
     "api.adoptopenjdk.net"     # AdoptOpenJDK toolchain provisioning (legacy projects)
     "api.azul.com"             # Azul / Zulu JDK toolchain provisioning
+    "repository.jboss.org"
   ];
 
   cidrs = [];
