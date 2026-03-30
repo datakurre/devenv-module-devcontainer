@@ -18,6 +18,7 @@ let
   inherit (firewall)
     firewallEnabled
     firewallScript
+    removeSudoScript
     ;
   settingsFormat = pkgs.formats.json { };
 
@@ -112,7 +113,8 @@ let
         else if firewallEnabled && cfg.network.mode == "none" then
           throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"none\""
         else
-          lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly";
+          lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly"
+          ++ lib.optional cfg.network.removeSudo "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly";
 
       firewallRunArgs = lib.optional firewallEnabled "--cap-add=NET_ADMIN";
 
@@ -162,6 +164,7 @@ let
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
             (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
+            (if cfg.network.removeSudo then "/run/devcontainer-remove-sudo" else null)
           ];
         in
         if parts != [ ] then lib.concatStringsSep " && " parts else null;
@@ -406,15 +409,15 @@ in
           Whether to remove the passwordless sudo entry (/etc/sudoers.d/vscode)
           after the firewall rules are applied.
 
-          When true (the default), the container user loses the ability to
-          modify firewall rules via sudo after startup, which is the recommended
-          security posture.
+          When true, the container user loses the ability to escalate to
+          root via sudo after startup. This is the recommended security
+          posture when using an outbound firewall, as it prevents the
+          container user from modifying the nftables rules.
 
-          Set to false if your workflow requires passwordless sudo after the
-          firewall has been activated (e.g. for Nix builds or other privileged
-          operations inside the container).
+          Works independently of the firewall: can be used on its own to
+          harden the container even without allowedHosts/allowedServices.
 
-          Has no effect when no allowedHosts or allowedServices are configured.
+          When false (the default), passwordless sudo is kept.
         '';
       };
     };

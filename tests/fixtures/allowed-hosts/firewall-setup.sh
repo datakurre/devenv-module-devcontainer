@@ -47,8 +47,8 @@ nft add rule inet devcontainer output tcp dport 53 accept
 nft add rule inet devcontainer output ct state established,related accept
 
 # Named sets for allowed addresses.
-nft add set inet devcontainer allowed4 '{ type ipv4_addr; }'
-nft add set inet devcontainer allowed6 '{ type ipv6_addr; }'
+nft add set inet devcontainer allowed4 '{ type ipv4_addr; flags interval; }'
+nft add set inet devcontainer allowed6 '{ type ipv6_addr; flags interval; }'
 nft add rule inet devcontainer output ip  daddr @allowed4 accept
 nft add rule inet devcontainer output ip6 daddr @allowed6 accept
 
@@ -65,6 +65,25 @@ for host in $ALLOWED_HOSTS; do
 done
 
 echo "Firewall ready."
+
+# Re-resolve hostnames periodically so rotating IPs stay reachable.
+if [ -n "$ALLOWED_HOSTS" ]; then
+  (
+    while true; do
+      sleep 300
+      for host in $ALLOWED_HOSTS; do
+        for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+          nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
+        done
+        for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+          nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
+        done
+      done
+    done
+  ) &
+  disown
+  echo "DNS refresh loop started (every 300s)."
+fi
 
 # Remove passwordless sudo so the container user cannot modify the rules.
 # Skipped in dev mode (FIREWALL_DEV=1) to allow manual rule tweaking.

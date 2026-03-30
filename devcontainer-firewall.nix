@@ -52,7 +52,7 @@ let
         if [ -x "$NIX_BIN" ]; then
           exec "$NIX_BIN" shell nixpkgs#nftables --command sh "$0" "$@"
         fi
-        echo "WARNING: nft not found and nix unavailable — outbound traffic unrestricted"
+        echo "WARNING: nft not found and nix unavTetävailable — outbound traffic unrestricted"
         exit 0
       fi
 
@@ -107,18 +107,44 @@ let
 
       echo "Network allowlist applied."
 
-      ${lib.optionalString cfg.network.removeSudo ''
-      # Remove passwordless sudo so the container user cannot modify the rules.
-      if [ -f /etc/sudoers.d/vscode ]; then
-        rm -f /etc/sudoers.d/vscode
-        echo "Passwordless sudo removed."
+      # Start a background loop to re-resolve hostnames periodically.
+      # Cloud services rotate IPs on short DNS TTLs; without this, new IPs
+      # returned after the initial resolution would be dropped by the firewall.
+      if [ -n "$ALLOWED_HOSTS" ]; then
+        (
+          while true; do
+            sleep 300
+            for host in $ALLOWED_HOSTS; do
+              for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+                nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
+              done
+              for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+                nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
+              done
+            done
+          done
+        ) &
+        disown
+        echo "DNS refresh loop started (every 300s)."
       fi
-      ''}
+
     '';
+
+  removeSudoScript = pkgs.writeScript "devcontainer-remove-sudo" ''
+    #!/bin/sh
+    if [ "$(id -u)" != "0" ]; then
+      exec sudo "$0" "$@"
+    fi
+    if [ -f /etc/sudoers.d/vscode ]; then
+      rm -f /etc/sudoers.d/vscode
+      echo "Passwordless sudo removed."
+    fi
+  '';
 in
 {
   inherit
     firewallEnabled
     firewallScript
+    removeSudoScript
     ;
 }
