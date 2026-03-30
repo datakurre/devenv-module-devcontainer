@@ -107,11 +107,13 @@ let
 
       echo "Network allowlist applied."
 
+      ${lib.optionalString cfg.network.removeSudo ''
       # Remove passwordless sudo so the container user cannot modify the rules.
       if [ -f /etc/sudoers.d/vscode ]; then
         rm -f /etc/sudoers.d/vscode
         echo "Passwordless sudo removed."
       fi
+      ''}
     '';
 in
 {
