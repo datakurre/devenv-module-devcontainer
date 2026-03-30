@@ -22,6 +22,21 @@ let
     ;
   settingsFormat = pkgs.formats.json { };
 
+  # Tweak helpers
+  tweak-gpg-agent = import ./tweaks/gpg-agent.nix { inherit lib; };
+  tweak-netrc = import ./tweaks/netrc.nix { inherit lib; };
+  tweak-pass = import ./tweaks/pass.nix { inherit lib; };
+  tweak-rootless = import ./tweaks/rootless.nix { inherit lib; };
+  tweak-podman = import ./tweaks/podman.nix { inherit lib pkgs; };
+  tweak-vscode = import ./tweaks/vscode.nix {
+    inherit lib;
+    pkgsDevcontainer = pkgs-devcontainer;
+  };
+  tweak-cli = import ./tweaks/cli.nix {
+    inherit lib;
+    pkgsDevcontainer = pkgs-devcontainer;
+  };
+
   # Fetch each vsix into the Nix store at build time
   vsixFetched = map (
     entry:
@@ -48,42 +63,10 @@ let
       # Start with base settings
       baseSettings = cfg.settings;
 
-      # Apply GPG agent tweak
-      gpgSettings = lib.optionalAttrs (lib.elem "gpg-agent" cfg.tweaks) {
-        mounts = [
-          "source=\${localEnv:XDG_RUNTIME_DIR}/gnupg/S.gpg-agent,target=/run/host-gpg-agent,type=bind,readonly"
-        ];
-        remoteEnv.GPG_TTY = "/dev/pts/0";
-        postStartCommand = "mkdir -p /home/vscode/.gnupg && rm -f /home/vscode/.gnupg/S.gpg-agent && ln -s /run/host-gpg-agent /home/vscode/.gnupg/S.gpg-agent";
-      };
-
-      # Apply netrc tweak
-      netrcSettings = lib.optionalAttrs (lib.elem "netrc" cfg.tweaks) (
-        assert lib.assertMsg (cfg.netrc != null) "devcontainer.netrc must be set when using 'netrc' tweak";
-        {
-          mounts = [
-            "source=${cfg.netrc},target=/home/vscode/.netrc,type=bind,readonly"
-          ];
-          onCreateCommand = "mkdir -p /home/vscode/.config/nix && echo 'extra-sandbox-paths = /tmp/.netrc' > /home/vscode/.config/nix/nix.conf && cat /home/vscode/.netrc > /tmp/.netrc";
-          containerEnv.NETRC = "/tmp/.netrc";
-        }
-      );
-
-      # Apply pass tweak
-      passSettings = lib.optionalAttrs (lib.elem "pass" cfg.tweaks) {
-        mounts = [
-          "source=\${localEnv:HOME}/.password-store,target=/home/vscode/.password-store,type=bind,readonly"
-        ];
-      };
-
-      # Apply podman/rootless tweaks
-      podmanSettings =
-        lib.optionalAttrs (lib.elem "rootless" cfg.tweaks || lib.elem "podman" cfg.tweaks)
-          {
-            containerUser = "vscode";
-            containerEnv.HOME = "/home/vscode";
-            runArgs = [ "--userns=keep-id" ];
-          };
+      gpgSettings = tweak-gpg-agent.settings cfg;
+      netrcSettings = tweak-netrc.settings cfg;
+      passSettings = tweak-pass.settings cfg;
+      podmanSettings = tweak-rootless.settings cfg;
 
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.network.mode == "host") {
@@ -239,53 +222,7 @@ let
     types
     mkOption
     mkIf
-    optionals
     ;
-  podmanSetupScript =
-    let
-      policyConf = pkgs.writeText "policy.conf" ''
-        {"default":[{"type":"insecureAcceptAnything"}],"transports":{"default-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}
-      '';
-      registriesConf = pkgs.writeText "registries.conf" ''
-        [registries]
-        [registries.block]
-        registries = []
-        [registries.insecure]
-        registries = []
-        [registries.search]
-        registries = ["default.io", "quay.io"]
-      '';
-      storageConf = pkgs.writeText "storage.conf" ''
-        [storage]
-        driver = "overlay"
-      '';
-      containersConf = pkgs.writeText "containers.conf" ''
-        [engine]
-        helper_binaries_dir = ["${pkgs.podman}/libexec/podman","${pkgs.crun}/bin","${pkgs.fuse-overlayfs}/bin"]
-        runtime = "crun"
-        [containers]
-        pids_limit = 0
-      '';
-    in
-    pkgs.writeScript "podman-setup" ''
-      #!${pkgs.runtimeShell}
-      if ! test -f ~/.config/containers/policy.json; then
-        install -Dm755 ${policyConf} ~/.config/containers/policy.json
-      fi
-      if ! test -f ~/.config/containers/registries.conf; then
-        install -Dm755 ${registriesConf} ~/.config/containers/registries.conf
-      fi
-      if ! test -f ~/.config/containers/storage.conf; then
-        install -Dm755 ${storageConf} ~/.config/containers/storage.conf
-      fi
-      install -Dm755 ${containersConf} ~/.config/containers/containers.conf
-      if command -v "systemctl" >/dev/null 2>&1; then
-        mkdir -p ~/.config/systemd/user
-        ln -sf ${pkgs.podman}/share/systemd/user/podman.socket ~/.config/systemd/user/podman.socket
-        ln -sf ${pkgs.podman}/share/systemd/user/podman.service ~/.config/systemd/user/podman.service
-        systemctl --user start podman.socket
-      fi
-    '';
 in
 {
   disabledModules = [
@@ -330,114 +267,7 @@ in
       '';
     };
 
-    network = {
-      mode = lib.mkOption {
-        type = lib.types.enum [
-          "bridge"
-          "host"
-          "none"
-          "named"
-        ];
-        default = "bridge";
-        description = ''
-          Network mode for the container.
-          - "bridge": Use the default bridge network (default)
-          - "host": Use host networking (shares the host's network namespace)
-          - "none": Disable all networking (complete isolation)
-          - "named": Join a named Docker/Podman network specified by network.name.
-            Two devcontainers using the same name share that network and can
-            reach each other by container name. The network must be pre-created
-            before starting the container (e.g. `docker network create my-net`).
-        '';
-      };
-
-      name = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "my-project-net";
-        description = ''
-          Name of the Docker/Podman network to join when network.mode = "named".
-          Must be set whenever network.mode = "named".
-        '';
-      };
-
-      allowedHosts = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = ''
-          List of hostnames, IP addresses, or CIDR ranges the container is
-          allowed to connect to outbound. When non-empty, all other outbound
-          connections are blocked via nftables inside the container.
-
-          Only outbound traffic is filtered; inbound traffic is not blocked.
-          This keeps published/forwarded devcontainer service ports reachable.
-
-          Requires network.mode = "bridge". Each entry is either:
-          - a hostname (e.g. "github.com") — resolved at container start via getent
-          - a bare IP address (e.g. "192.168.1.10")
-          - a CIDR range (e.g. "10.0.0.0/8", "2001:db8::/32")
-
-          Loopback, DNS (port 53), and already-established connections are
-          always permitted regardless of this list.
-
-          Adds --cap-add=NET_ADMIN to runArgs automatically.
-        '';
-      };
-
-      allowedServices = lib.mkOption {
-        type = lib.types.listOf (
-          lib.types.enum [
-            "azure"
-            "claude"
-            "dockerhub"
-            "elm"
-            "github"
-            "gitlab"
-            "go"
-            "google"
-            "haskell"
-            "java"
-            "nix"
-            "npm"
-            "openai"
-            "python"
-          ]
-        );
-        default = [ ];
-        example = [
-          "github"
-          "openai"
-        ];
-        description = ''
-          Enable curated outbound host allowlists for well-known services.
-          Each name adds a hardcoded set of hostnames (and CIDRs for github)
-          to the firewall allowlist. Service definitions live in the
-          services/ directory of this module.
-
-          These are merged with network.allowedHosts.
-          Only outbound traffic is filtered; inbound traffic is not blocked.
-        '';
-      };
-
-      removeSudo = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = ''
-          Whether to remove the passwordless sudo entry (/etc/sudoers.d/vscode)
-          after the firewall rules are applied.
-
-          When true, the container user loses the ability to escalate to
-          root via sudo after startup. This is the recommended security
-          posture when using an outbound firewall, as it prevents the
-          container user from modifying the nftables rules.
-
-          Works independently of the firewall: can be used on its own to
-          harden the container even without allowedHosts/allowedServices.
-
-          When false (the default), passwordless sudo is kept.
-        '';
-      };
-    };
+    network = import ./network.nix { inherit lib; };
 
     netrc = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
@@ -553,33 +383,12 @@ in
   config = lib.mkIf config.devcontainer.enable {
     packages =
       [ ]
-      ++ (optionals (lib.elem "vscode" cfg.tweaks) [
-        (pkgs-devcontainer.vscode-with-extensions.override {
-          vscode = pkgs-devcontainer.vscode;
-          vscodeExtensions = [
-            pkgs-devcontainer.vscode-extensions.ms-vscode-remote.remote-containers
-          ]
-          ++ optionals (lib.elem "vscodevim.vim" cfg.settings.customizations.vscode.extensions) [
-            pkgs-devcontainer.vscode-extensions.vscodevim.vim
-          ];
-        })
-      ])
-      ++ (optionals (lib.elem "podman" cfg.tweaks) [
-        pkgs.podman
-        pkgs.crun
-        pkgs.conmon
-        pkgs.skopeo
-        pkgs.slirp4netns
-        pkgs.fuse-overlayfs
-      ])
-      ++ (optionals (lib.elem "cli" cfg.tweaks) [
-        pkgs-devcontainer.devcontainer
-      ]);
+      ++ tweak-vscode.packages cfg
+      ++ tweak-podman.packages cfg
+      ++ tweak-cli.packages cfg;
     enterShell = ''
       cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
     ''
-    + (lib.optionalString (lib.elem "podman" cfg.tweaks) ''
-      ${podmanSetupScript}
-    '');
+    + tweak-podman.enterShell cfg;
   };
 }
