@@ -398,6 +398,25 @@ in
           Only outbound traffic is filtered; inbound traffic is not blocked.
         '';
       };
+
+      removeSudo = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Whether to remove the passwordless sudo entry (/etc/sudoers.d/vscode)
+          after the firewall rules are applied.
+
+          When true (the default), the container user loses the ability to
+          modify firewall rules via sudo after startup, which is the recommended
+          security posture.
+
+          Set to false if your workflow requires passwordless sudo after the
+          firewall has been activated (e.g. for Nix builds or other privileged
+          operations inside the container).
+
+          Has no effect when no allowedHosts or allowedServices are configured.
+        '';
+      };
     };
 
     netrc = lib.mkOption {
@@ -496,7 +515,6 @@ in
         options.customizations.vscode.extensions = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [
-            "jnoortheen.nix-ide"
           ];
           description = ''
             A list of pre-installed VS Code extensions.
