@@ -92,10 +92,8 @@ let
 
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
-        if firewallEnabled && cfg.network.mode == "host" then
-          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"host\""
-        else if firewallEnabled && cfg.network.mode == "none" then
-          throw "devcontainer.network.allowedHosts/allowedServices is incompatible with network.mode = \"none\""
+        if firewallEnabled && !(cfg.network.mode == "bridge" || cfg.network.mode == "named") then
+          throw "devcontainer.network.allowedHosts/allowedServices requires network.mode = \"bridge\" (default) or \"named\", but is set to \"${cfg.network.mode}\""
         else
           lib.optional firewallEnabled "source=${firewallScript},target=/run/devcontainer-firewall,type=bind,readonly"
           ++ lib.optional firewallEnabled "source=${removeSudoScript},target=/run/devcontainer-remove-sudo,type=bind,readonly"

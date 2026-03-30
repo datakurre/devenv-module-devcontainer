@@ -41,7 +41,7 @@
       Only outbound traffic is filtered; inbound traffic is not blocked.
       This keeps published/forwarded devcontainer service ports reachable.
 
-      Requires network.mode = "bridge". Each entry is either:
+      Requires network.mode = "bridge" (default) or "named". Each entry is either:
       - a hostname (e.g. "github.com") — resolved at container start via getent
       - a bare IP address (e.g. "192.168.1.10")
       - a CIDR range (e.g. "10.0.0.0/8", "2001:db8::/32")
