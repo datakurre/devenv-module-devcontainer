@@ -44,6 +44,18 @@ let
         exec sudo "$0" "$@"
       fi
 
+      # Ensure nix-daemon is running so that nix commands (e.g. devenv shell) work
+      # after passwordless sudo is revoked later in postStartCommand.
+      if ! pgrep -x nix-daemon > /dev/null 2>&1; then
+        NIX_DAEMON="$(command -v nix-daemon 2>/dev/null || echo /nix/var/nix/profiles/default/bin/nix-daemon)"
+        if [ -x "$NIX_DAEMON" ]; then
+          "$NIX_DAEMON" &
+          echo "nix-daemon started."
+        else
+          echo "WARNING: nix-daemon not found — nix commands may fail."
+        fi
+      fi
+
       # If nft is not on PATH, re-exec inside a nix shell that provides it.
       # This is safe here because the firewall hasn't been applied yet, so internet
       # access (needed by `nix shell` to fetch nftables) is still unrestricted.
@@ -52,7 +64,7 @@ let
         if [ -x "$NIX_BIN" ]; then
           exec "$NIX_BIN" shell nixpkgs#nftables --command sh "$0" "$@"
         fi
-        echo "WARNING: nft not found and nix unavTetävailable — outbound traffic unrestricted"
+        echo "WARNING: nft not found and nix unavailable — outbound traffic unrestricted"
         exit 0
       fi
 
@@ -130,9 +142,25 @@ let
       # Cloud services rotate IPs on short DNS TTLs; without this, new IPs
       # returned after the initial resolution would be dropped by the firewall.
       if [ -n "$ALLOWED_HOSTS" ]; then
+        for host in $ALLOWED_HOSTS; do
+          resolved=0
+          for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+            nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
+            echo "  allowed: host $host -> $ip"
+            resolved=1
+          done
+          for ip in $(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
+            nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
+            echo "  allowed: host $host -> $ip"
+            resolved=1
+          done
+          if [ "$resolved" = "0" ]; then
+            echo "  warning: host $host did not resolve"
+          fi
+        done
         (
+          sleep 10
           while true; do
-            sleep 300
             for host in $ALLOWED_HOSTS; do
               for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
                 nft add element inet devcontainer allowed4 "{ $ip }" 2>/dev/null || true
@@ -141,6 +169,7 @@ let
                 nft add element inet devcontainer allowed6 "{ $ip }" 2>/dev/null || true
               done
             done
+            sleep 300
           done
         ) &
         echo "DNS refresh loop started (every 300s)."
