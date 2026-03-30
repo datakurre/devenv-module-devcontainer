@@ -116,6 +116,16 @@ let
 
       echo "Network allowlist applied."
 
+      # Ensure the targeted sudoers rule for /run/devcontainer-remove-sudo is
+      # present (running as root here, so we can always write it).  This makes
+      # the rule available even on plain container restarts where postCreateCommand
+      # has already run and the general vscode passwordless sudo is gone.
+      if [ -d /etc/sudoers.d ]; then
+        printf 'vscode ALL=(root) NOPASSWD: /run/devcontainer-firewall\nvscode ALL=(root) NOPASSWD: /run/devcontainer-remove-sudo\n' \
+          > /etc/sudoers.d/devcontainer-firewall
+        chmod 440 /etc/sudoers.d/devcontainer-firewall
+      fi
+
       # Start a background loop to re-resolve hostnames periodically.
       # Cloud services rotate IPs on short DNS TTLs; without this, new IPs
       # returned after the initial resolution would be dropped by the firewall.
