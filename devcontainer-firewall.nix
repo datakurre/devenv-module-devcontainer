@@ -124,7 +124,6 @@ let
             done
           done
         ) &
-        disown
         echo "DNS refresh loop started (every 300s)."
       fi
 

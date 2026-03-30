@@ -155,6 +155,23 @@ let
             ""
         );
 
+      # When removeSudo is enabled, install a targeted sudoers rule during
+      # postCreateCommand so the firewall can still be re-applied on restart via
+      # `sudo /run/devcontainer-firewall` even after the general sudo is removed.
+      finalPostCreateCommand =
+        let
+          firewallSudoersCmd =
+            if firewallEnabled && cfg.network.removeSudo then
+              "echo 'vscode ALL=(root) NOPASSWD: /run/devcontainer-firewall' | sudo tee /etc/sudoers.d/devcontainer-firewall > /dev/null && sudo chmod 440 /etc/sudoers.d/devcontainer-firewall"
+            else
+              null;
+          parts = lib.filter (p: p != null && p != "") [
+            (mergedSettings.postCreateCommand or null)
+            firewallSudoersCmd
+          ];
+        in
+        if parts != [ ] then lib.concatStringsSep " && " parts else null;
+
       # Concatenate all postStartCommand sources: user base, gpg-agent, firewall.
       # This also fixes the pre-existing issue where gpg-agent would overwrite the
       # user's own postStartCommand when both were set.
@@ -178,8 +195,8 @@ let
     // lib.optionalAttrs (finalPostStartCommand != null) {
       postStartCommand = finalPostStartCommand;
     }
-    // lib.optionalAttrs (mergedSettings.postCreateCommand or null != null) {
-      postCreateCommand = mergedSettings.postCreateCommand;
+    // lib.optionalAttrs (finalPostCreateCommand != null) {
+      postCreateCommand = finalPostCreateCommand;
     }
     // {
       mounts = finalMounts;

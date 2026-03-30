@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Firewall setup for the allowed-hosts integration test fixture (nftables).
 #
 # Allowed outbound: github.com (resolved at runtime) + loopback + DNS.
@@ -15,7 +15,7 @@ fi
 if ! command -v nft >/dev/null 2>&1; then
   NIX_BIN="$(command -v nix 2>/dev/null || echo /nix/var/nix/profiles/default/bin/nix)"
   if [ -x "$NIX_BIN" ]; then
-    exec "$NIX_BIN" shell nixpkgs#nftables --command sh "$0" "$@"
+    exec "$NIX_BIN" shell nixpkgs#nftables --command bash "$0" "$@"
   fi
   echo "WARNING: nft not found and nix unavailable — outbound traffic unrestricted"
   exit 0
