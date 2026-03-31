@@ -1,4 +1,4 @@
-# npm allowlist — npm registry and Yarn classic registry.
+# javascript  allowlist — npm registry and Yarn classic registry.
 # Note: GitHub Packages npm registry (npm.pkg.github.com) is covered by the
 # github service. Scoped registries pointing elsewhere need their own entries
 # in allowedHosts.

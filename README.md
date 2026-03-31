@@ -120,7 +120,7 @@ devenv shell
 | `network.mode` | `bridge`, `host`, `none`, `named` | `bridge` (default): standard container networking; `host`: shares the host network namespace; `none`: disables all networking (complete isolation); `named`: joins the Docker/Podman network specified by `network.name` |
 | `network.name` | string | Name of the Docker/Podman network to join. Required when `network.mode = "named"`. The network must be pre-created before starting the container (e.g. `docker network create my-net`). Two devcontainers using the same name share that network and can reach each other by container name. |
 | `network.allowedHosts` | list of strings | Outbound allowlist: hostnames, bare IPs, or CIDR ranges the container may reach. When non-empty, all other outbound traffic is blocked via nftables. Compatible with `network.mode = "bridge"` or `"named"`. Loopback and DNS are always allowed. Inbound traffic is not filtered. |
-| `network.allowedServices` | list of strings | Service shortcuts that expand to curated host allowlists. Available: `azure`, `claude`, `dockerhub`, `elm`, `github`, `gitlab`, `go`, `google`, `haskell`, `java`, `nix`, `npm`, `openai`, `python`. Merged with `network.allowedHosts`. Inbound traffic is not filtered. |
+| `network.allowedServices` | list of strings | Service shortcuts that expand to curated host allowlists. Available: `azure`, `claude`, `dockerhub`, `elm`, `github`, `gitlab`, `go`, `google`, `haskell`, `java`, `nix`, `javascript`, `openai`, `python`. Merged with `network.allowedHosts`. Inbound traffic is not filtered. |
 | `netrc` | path | Path to `.netrc` file to mount. Required when using the `netrc` tweak |
 | `settings` | any | Pass-through to `devcontainer.json` |
 

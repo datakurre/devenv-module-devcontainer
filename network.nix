@@ -69,7 +69,7 @@
         "haskell"
         "java"
         "nix"
-        "npm"
+        "javascript"
         "openai"
         "python"
       ]
