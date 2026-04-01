@@ -90,6 +90,11 @@ let
         }
       );
 
+      # Apply container name
+      containerNameSettings = lib.optionalAttrs (cfg.name != null) {
+        runArgs = [ "--name=${cfg.name}" ];
+      };
+
       # allowedHosts: bind-mount the generated firewall script and request NET_ADMIN
       firewallMounts =
         if firewallEnabled && !(cfg.network.mode == "bridge" || cfg.network.mode == "named") then
@@ -103,7 +108,7 @@ let
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
-        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) passSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings
+        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) passSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings) containerNameSettings
       );
 
       # Special handling for lists - concatenate instead of replace
@@ -121,6 +126,7 @@ let
         ++ (hostNetworkSettings.runArgs or [ ])
         ++ (noneNetworkSettings.runArgs or [ ])
         ++ (namedNetworkSettings.runArgs or [ ])
+        ++ (containerNameSettings.runArgs or [ ])
         ++ firewallRunArgs;
 
       finalContainerEnv =
@@ -280,6 +286,14 @@ in
     };
 
     network = import ./network.nix { inherit lib; };
+
+    name = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Name of the devcontainer. Sets the container name via --name runArg.
+      '';
+    };
 
     netrc = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
