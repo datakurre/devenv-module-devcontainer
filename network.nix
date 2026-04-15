@@ -30,6 +30,16 @@
     '';
   };
 
+  hostname = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    default = null;
+    example = "my-devcontainer";
+    description = ''
+      Hostname of the container. Sets the container's hostname via --hostname runArg.
+      Optional.
+    '';
+  };
+
   allowedHosts = lib.mkOption {
     type = lib.types.listOf lib.types.str;
     default = [ ];
