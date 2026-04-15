@@ -13,6 +13,7 @@
   google     = import ./google.nix;
   haskell    = import ./haskell.nix;
   java       = import ./java.nix;
+  lua        = import ./lua.nix;
   nix        = import ./nix.nix;
   javascript = import ./javascript.nix;
   openai     = import ./openai.nix;

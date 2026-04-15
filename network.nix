@@ -78,6 +78,7 @@
         "google"
         "haskell"
         "java"
+        "lua"
         "nix"
         "javascript"
         "openai"
