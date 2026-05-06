@@ -1,15 +1,17 @@
-#!/usr/bin/env bash
-# devenv-init: Interactive wizard to scaffold devenv.local.nix, devenv.local.yaml,
-# and (if absent) devenv.nix for projects using devenv-module-devcontainer.
+# devenv-init: Interactive wizard to scaffold devenv.yaml, devenv.nix,
+# devenv.local.nix, and devenv.local.yaml for projects using devenv-module-devcontainer.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+LAST_WRITE_DONE=0
+
 write_file() {
   local path="$1"
   local content="$2"
+  LAST_WRITE_DONE=0
   if [[ -f "$path" ]]; then
     gum style --foreground 214 "  $path already exists."
     if ! gum confirm "Overwrite $path?"; then
@@ -18,6 +20,7 @@ write_file() {
     fi
   fi
   printf '%s\n' "$content" > "$path"
+  LAST_WRITE_DONE=1
   gum style --foreground 82 "  Created $path"
 }
 
@@ -39,18 +42,39 @@ gum style \
   "devenv-module-devcontainer init"
 
 gum style --foreground 240 \
-  "Scaffolds devenv.local.nix, devenv.local.yaml, and devenv.nix in the current directory."
+  "Scaffolds devenv.yaml, devenv.nix, devenv.local.nix, and devenv.local.yaml in the current directory."
 echo
 
 # ---------------------------------------------------------------------------
 # 1. Module URL
 # ---------------------------------------------------------------------------
 
+# Derive a devenv input URL from the flake source URL embedded at build time.
+# Handles three cases:
+#   https://host/path.git?rev=... → git+https://host/path  (nix run https://...)
+#   git+https://host/path?rev=... → git+https://host/path  (nix run git+https://...)
+#   path:/... or empty            → empty (local dev / unknown)
+_guess_module_url() {
+  local url="${FLAKE_SOURCE_URL:-}"
+  # Strip query string (?rev=... etc.)
+  url="${url%%\?*}"
+  # Convert plain https:// to git+https:// and strip .git suffix
+  if [[ "$url" == https://* ]]; then
+    url="git+https://${url#https://}"
+    url="${url%.git}"
+  fi
+  # Only return git+https:// URLs; discard path: or empty
+  if [[ "$url" == git+https://* ]]; then
+    echo "$url"
+  fi
+}
+_GUESSED_URL=$(_guess_module_url)
+
 gum style --bold "Module URL"
 gum style --foreground 240 "URL for devenv-module-devcontainer (written into devenv.local.yaml)"
 MODULE_URL=$(gum input \
   --placeholder "git+https://gitlab.kopla.jyu.fi/nix/devenv-module-devcontainer" \
-  --value "git+https://gitlab.kopla.jyu.fi/nix/devenv-module-devcontainer")
+  --value "${_GUESSED_URL:-}")
 echo
 
 # ---------------------------------------------------------------------------
@@ -61,7 +85,7 @@ gum style --bold "Tweaks"
 gum style --foreground 240 "Select the devcontainer tweaks to enable (space to toggle, enter to confirm)"
 TWEAKS=$(gum choose --no-limit \
   --selected "gpg-agent,vscode" \
-  "cli" "gpg-agent" "netrc" "pass" "podman" "rootless" "vscode")
+  "devcontainer" "gpg-agent" "netrc" "podman" "vscode")
 echo
 
 # ---------------------------------------------------------------------------
@@ -85,7 +109,7 @@ fi
 gum style --bold "Network mode"
 NETWORK_MODE=$(gum choose \
   --selected "bridge" \
-  "bridge" "named" "host" "none")
+  "bridge" "named" "host")
 echo
 
 # ---------------------------------------------------------------------------
@@ -103,35 +127,55 @@ if [[ "$NETWORK_MODE" == "named" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Languages (VS Code extensions + firewall allowedServices)
+# 6. VS Code extensions
 # ---------------------------------------------------------------------------
 
-gum style --bold "Languages"
-gum style --foreground 240 "Select the languages you work with (adds VS Code extensions and firewall service rules)"
-LANGUAGES=$(gum choose --no-limit \
-  "C/C++" "Go" "Haskell" "Java" "JavaScript/TypeScript" "Lua" "Nix" "Python" "Rust")
+gum style --bold "VS Code extensions"
+gum style --foreground 240 "Select extensions to install (space to toggle, enter to confirm)"
+_RAW_EXTENSIONS=$(gum choose --no-limit \
+  --header "AI / Coding agents · DevEnv / Nix · Python · Go/Rust/C++ · JVM/Haskell · Web · Lua · Editor" \
+  --selected "GitHub.copilot — GitHub Copilot,GitHub.copilot-chat — GitHub Copilot Chat,datakurre.devenv — devenv for VS Code,jnoortheen.nix-ide — Nix IDE" \
+  "GitHub.copilot — GitHub Copilot" \
+  "GitHub.copilot-chat — GitHub Copilot Chat" \
+  "openai.chatgpt — OpenAI Codex (ChatGPT)" \
+  "anthropic.claude-code — Claude Code (Anthropic)" \
+  "Continue.continue — Continue" \
+  "Cline.cline — Cline" \
+  "datakurre.devenv — devenv for VS Code" \
+  "jnoortheen.nix-ide — Nix IDE" \
+  "ms-python.python — Python" \
+  "ms-python.debugpy — Python Debugger" \
+  "ms-python.pylance — Pylance" \
+  "charliermarsh.ruff — Ruff" \
+  "d-biehl.robotcode — RobotCode" \
+  "golang.go — Go" \
+  "rust-lang.rust-analyzer — rust-analyzer" \
+  "ms-vscode.cpptools — C/C++" \
+  "vscjava.vscode-java-pack — Extension Pack for Java" \
+  "haskell.haskell — Haskell" \
+  "Elmtooling.elm-ls-vscode — Elm" \
+  "dbaeumer.vscode-eslint — ESLint" \
+  "esbenp.prettier-vscode — Prettier" \
+  "redhat.vscode-yaml — YAML (Red Hat)" \
+  "tamasfe.even-better-toml — Even Better TOML" \
+  "sumneko.lua — Lua" \
+  "vscodevim.vim — Vim")
+# Strip " — Title" suffix to keep only extension IDs
+SELECTED_EXTENSIONS=$(printf '%s\n' "$_RAW_EXTENSIONS" | sed 's/ — .*//')
 echo
 
-# Map languages to VS Code extension IDs
-EXTRA_EXTENSIONS=""
+# Derive allowedServices from selected extensions
 ALLOWED_SERVICES=""
+add_svc() { ALLOWED_SERVICES="${ALLOWED_SERVICES}${1}"$'\n'; }
 
-add_ext()  { EXTRA_EXTENSIONS="${EXTRA_EXTENSIONS}${1}"$'\n'; }
-add_svc()  { ALLOWED_SERVICES="${ALLOWED_SERVICES}${1}"$'\n'; }
-
-if echo "$LANGUAGES" | grep -q "^C/C++$";               then add_ext "ms-vscode.cpptools"; fi
-if echo "$LANGUAGES" | grep -q "^Go$";                   then add_ext "golang.go";          add_svc "go"; fi
-if echo "$LANGUAGES" | grep -q "^Haskell$";              then add_ext "haskell.haskell";    add_svc "haskell"; fi
-if echo "$LANGUAGES" | grep -q "^Java$";                 then add_ext "vscjava.vscode-java-pack"; add_svc "java"; fi
-if echo "$LANGUAGES" | grep -q "^JavaScript/TypeScript$"; then
-  add_ext "dbaeumer.vscode-eslint"
-  add_ext "esbenp.prettier-vscode"
-  add_svc "javascript"
-fi
-if echo "$LANGUAGES" | grep -q "^Lua$";    then add_ext "sumneko.lua"; fi
-# Nix is always included via jnoortheen.nix-ide (added to base list below)
-if echo "$LANGUAGES" | grep -q "^Python$"; then add_ext "ms-python.python"; add_svc "python"; fi
-if echo "$LANGUAGES" | grep -q "^Rust$";   then add_ext "rust-lang.rust-analyzer"; fi
+echo "$SELECTED_EXTENSIONS" | grep -q "^openai\.chatgpt$"              && add_svc "openai"
+echo "$SELECTED_EXTENSIONS" | grep -q "^anthropic\.claude-code$"       && add_svc "claude"
+echo "$SELECTED_EXTENSIONS" | grep -q "^golang\.go$"                   && add_svc "go"
+echo "$SELECTED_EXTENSIONS" | grep -q "^haskell\.haskell$"             && add_svc "haskell"
+echo "$SELECTED_EXTENSIONS" | grep -q "^Elmtooling\.elm-ls-vscode$"     && add_svc "elm"
+echo "$SELECTED_EXTENSIONS" | grep -q "^vscjava\.vscode-java-pack$"    && add_svc "java"
+echo "$SELECTED_EXTENSIONS" | grep -qE "^(dbaeumer\.vscode-eslint|esbenp\.prettier-vscode)$" && add_svc "javascript"
+echo "$SELECTED_EXTENSIONS" | grep -q "^ms-python\.python$"            && add_svc "python"
 
 # ---------------------------------------------------------------------------
 # 7. Summary
@@ -144,7 +188,7 @@ gum style "  Tweaks     : $(echo "$TWEAKS" | tr '\n' ' ')"
 [[ -n "$NETRC_PATH" ]]      && gum style "  netrc path : $NETRC_PATH"
 gum style "  Network    : $NETWORK_MODE"
 [[ -n "$NETWORK_NAME" ]]    && gum style "  Net name   : $NETWORK_NAME  hostname: $NETWORK_HOSTNAME"
-[[ -n "$LANGUAGES" ]]       && gum style "  Languages  : $(echo "$LANGUAGES" | tr '\n' ' ')"
+[[ -n "$SELECTED_EXTENSIONS" ]] && gum style "  Extensions : $(echo "$SELECTED_EXTENSIONS" | tr '\n' ' ')"
 echo
 
 if ! gum confirm "Write files?"; then
@@ -176,11 +220,11 @@ build_nix_local() {
     [[ -n "$t" ]] && tweaks_nix="${tweaks_nix}      \"${t}\"\n"
   done <<< "$TWEAKS"
 
-  # Base VS Code extensions
-  local exts="      \"GitHub.copilot\"\n      \"GitHub.copilot-chat\"\n      \"datakurre.devenv\"\n      \"jnoortheen.nix-ide\""
+  # VS Code extensions — use selection directly
+  local exts=""
   while IFS= read -r e; do
-    [[ -n "$e" ]] && exts="${exts}\n      \"${e}\""
-  done <<< "$EXTRA_EXTENSIONS"
+    [[ -n "$e" ]] && exts="${exts}      \"${e}\"\n"
+  done <<< "$SELECTED_EXTENSIONS"
 
   local out
   out="{"
@@ -239,22 +283,27 @@ $(printf '%b' "$exts")
 
 NIX_LOCAL_CONTENT=$(build_nix_local)
 
-# --- devenv.nix (empty stub only if absent) ---
+# --- devenv.yaml ---
 
-NIX_STUB="{ }"
+DEVENV_YAML_CONTENT="# yaml-language-server: \$schema=https://devenv.sh/devenv.schema.json"
+
+# --- devenv.nix stub ---
+
+NIX_STUB='{
+  profiles.shell.module = {pkgs, ...}: {
+  };
+}'
 
 # ---------------------------------------------------------------------------
 # 9. Write files
 # ---------------------------------------------------------------------------
 
+write_file "devenv.yaml"       "$DEVENV_YAML_CONTENT"
 write_file "devenv.local.yaml" "$YAML_CONTENT"
 write_file "devenv.local.nix"  "$NIX_LOCAL_CONTENT"
-
-if [[ ! -f "devenv.nix" ]]; then
-  write_file "devenv.nix" "$NIX_STUB"
-else
-  gum style --foreground 240 "  devenv.nix already exists — not touched."
-fi
+[[ "$LAST_WRITE_DONE" == 1 ]] && nixfmt devenv.local.nix
+write_file "devenv.nix"        "$NIX_STUB"
+[[ "$LAST_WRITE_DONE" == 1 ]] && nixfmt devenv.nix
 
 echo
 gum style --bold --foreground 82 "Done. Next steps:"

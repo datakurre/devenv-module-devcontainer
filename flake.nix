@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:nixos/nixpkgs";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -13,6 +13,8 @@
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      # Embed the flake's own source URL so init.sh can guess the devenv input URL.
+      flakeSourceUrl = self.sourceInfo.url or "";
     in
     {
       apps = forAllSystems (pkgs: {
@@ -20,8 +22,10 @@
           let
             wizard = pkgs.writeShellApplication {
               name = "devenv-init";
-              runtimeInputs = [ pkgs.gum ];
-              text = builtins.readFile ./init.sh;
+              runtimeInputs = [ pkgs.gum pkgs.nixfmt-rfc-style ];
+              text = ''
+                FLAKE_SOURCE_URL=${nixpkgs.lib.escapeShellArg flakeSourceUrl}
+              '' + builtins.readFile ./init.sh;
             };
           in
           {
