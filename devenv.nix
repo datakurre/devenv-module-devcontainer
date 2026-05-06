@@ -26,14 +26,12 @@ let
   # Tweak helpers
   tweak-gpg-agent = import ./tweaks/gpg-agent.nix { inherit lib; };
   tweak-netrc = import ./tweaks/netrc.nix { inherit lib; };
-  tweak-pass = import ./tweaks/pass.nix { inherit lib; };
-  tweak-rootless = import ./tweaks/rootless.nix { inherit lib; };
   tweak-podman = import ./tweaks/podman.nix { inherit lib pkgs; };
   tweak-vscode = import ./tweaks/vscode.nix {
     inherit lib;
     pkgsDevcontainer = pkgs-devcontainer;
   };
-  tweak-cli = import ./tweaks/cli.nix {
+  tweak-devcontainer = import ./tweaks/devcontainer.nix {
     inherit lib;
     pkgsDevcontainer = pkgs-devcontainer;
   };
@@ -66,8 +64,7 @@ let
 
       gpgSettings = tweak-gpg-agent.settings cfg;
       netrcSettings = tweak-netrc.settings cfg;
-      passSettings = tweak-pass.settings cfg;
-      podmanSettings = tweak-rootless.settings cfg;
+      podmanSettings = tweak-podman.settings cfg;
 
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.network.mode == "host") {
@@ -113,7 +110,7 @@ let
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
-        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) passSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings) containerNameSettings) hostnameSettings
+        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings) containerNameSettings) hostnameSettings
       );
 
       # Special handling for lists - concatenate instead of replace
@@ -121,7 +118,6 @@ let
         (baseSettings.mounts or [ ])
         ++ (gpgSettings.mounts or [ ])
         ++ (netrcSettings.mounts or [ ])
-        ++ (passSettings.mounts or [ ])
         ++ vsixMounts
         ++ firewallMounts;
 
@@ -258,17 +254,15 @@ in
     tweaks = mkOption {
       type = types.listOf (
         types.enum [
-          "rootless"
           "podman"
           "vscode"
           "gpg-agent"
           "netrc"
-          "pass"
-          "cli"
+          "devcontainer"
         ]
       );
       default = [ ];
-      description = "List of tweaks to apply to the devcontainer configuration. 'cli': installs the devcontainer CLI (@devcontainers/cli) on the host shell.";
+      description = "List of tweaks to apply to the devcontainer configuration. 'devcontainer': installs the devcontainer CLI (@devcontainers/cli) on the host shell. 'podman': Nix-provided rootless Podman.";
     };
 
     vsix = lib.mkOption {
@@ -417,7 +411,7 @@ in
       [ ]
       ++ tweak-vscode.packages cfg
       ++ tweak-podman.packages cfg
-      ++ tweak-cli.packages cfg;
+      ++ tweak-devcontainer.packages cfg;
     enterShell = ''
       cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
     ''

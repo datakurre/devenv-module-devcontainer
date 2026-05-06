@@ -5,7 +5,7 @@
 # runs connectivity checks inside the container, then tears it down.
 #
 # Prerequisites:
-#   - devcontainer CLI  →  add "cli" to devcontainer.tweaks in devenv.local.nix
+#   - devcontainer CLI  →  add "devcontainer" to devcontainer.tweaks in devenv.local.nix
 #   - podman or docker available on PATH
 #
 # Usage:

@@ -4,11 +4,11 @@
 
 ### Prerequisites
 
-- The `cli` tweak must be active so the `devcontainer` CLI is on PATH.
+- The `devcontainer` tweak must be active so the `devcontainer` CLI is on PATH.
 - `podman` or `docker` must be available.
 
 ```nix
-devcontainer.tweaks = [ "podman" "vscode" "cli" ];
+devcontainer.tweaks = [ "podman" "vscode" "devcontainer" ];
 ```
 
 Re-enter the devcontainer shell after changing tweaks:

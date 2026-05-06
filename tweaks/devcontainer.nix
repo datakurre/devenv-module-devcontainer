@@ -2,7 +2,7 @@
 {
   packages =
     cfg:
-    lib.optionals (lib.elem "cli" cfg.tweaks) [
+    lib.optionals (lib.elem "devcontainer" cfg.tweaks) [
       pkgsDevcontainer.devcontainer
     ];
 }
