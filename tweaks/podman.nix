@@ -55,6 +55,14 @@ in
       pkgs.fuse-overlayfs
     ];
 
+  settings =
+    cfg:
+    lib.optionalAttrs (lib.elem "podman" cfg.tweaks) {
+      containerUser = "vscode";
+      containerEnv.HOME = "/home/vscode";
+      runArgs = [ "--userns=keep-id" ];
+    };
+
   enterShell =
     cfg:
     lib.optionalString (lib.elem "podman" cfg.tweaks) ''
