@@ -14,7 +14,7 @@ write_file() {
   LAST_WRITE_DONE=0
   if [[ -f "$path" ]]; then
     gum style --foreground 214 "  $path already exists."
-    if ! gum confirm "Overwrite $path?"; then
+    if ! gum confirm --default=false "Overwrite $path?"; then
       gum style --foreground 240 "  Skipped $path."
       return
     fi
@@ -298,12 +298,14 @@ NIX_STUB='{
 # 9. Write files
 # ---------------------------------------------------------------------------
 
-write_file "devenv.yaml"       "$DEVENV_YAML_CONTENT"
+[[ ! -f "devenv.yaml" ]] && write_file "devenv.yaml"       "$DEVENV_YAML_CONTENT"
 write_file "devenv.local.yaml" "$YAML_CONTENT"
 write_file "devenv.local.nix"  "$NIX_LOCAL_CONTENT"
 [[ "$LAST_WRITE_DONE" == 1 ]] && nixfmt devenv.local.nix
-write_file "devenv.nix"        "$NIX_STUB"
-[[ "$LAST_WRITE_DONE" == 1 ]] && nixfmt devenv.nix
+if [[ ! -f "devenv.nix" ]]; then
+  write_file "devenv.nix"        "$NIX_STUB"
+  [[ "$LAST_WRITE_DONE" == 1 ]] && nixfmt devenv.nix
+fi
 
 echo
 gum style --bold --foreground 82 "Done. Next steps:"
