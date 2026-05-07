@@ -208,7 +208,7 @@ YAML_CONTENT="inputs:
     url: ${MODULE_URL}
     flake: false
   devenv-module-devcontainer-nixpkgs:
-    url: github:nixos/nixpkgs
+    url: github:nixos/nixpkgs/nixos-unstable
 imports:
   - devenv-module-devcontainer"
 

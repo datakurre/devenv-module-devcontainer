@@ -1,4 +1,4 @@
 # yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
 inputs:
   devenv-module-devcontainer-nixpkgs:
-    url: github:nixos/nixpkgs
+    url: github:nixos/nixpkgs/nixos-unstable
