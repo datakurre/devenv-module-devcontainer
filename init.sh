@@ -85,7 +85,7 @@ gum style --bold "Tweaks"
 gum style --foreground 240 "Select the devcontainer tweaks to enable (space to toggle, enter to confirm)"
 TWEAKS=$(gum choose --no-limit \
   --selected "gpg-agent,vscode" \
-  "devcontainer" "gpg-agent" "netrc" "podman" "vscode")
+  "devcontainer" "gpg-agent" "netrc" "podman" "vscode" "antigravity")
 echo
 
 # ---------------------------------------------------------------------------
@@ -167,6 +167,10 @@ echo
 # Derive allowedServices from selected extensions
 ALLOWED_SERVICES=""
 add_svc() { ALLOWED_SERVICES="${ALLOWED_SERVICES}${1}"$'\n'; }
+
+add_svc "github"
+add_svc "gitlab"
+add_svc "nix"
 
 echo "$SELECTED_EXTENSIONS" | grep -q "^openai\.chatgpt$"              && add_svc "openai"
 echo "$SELECTED_EXTENSIONS" | grep -q "^anthropic\.claude-code$"       && add_svc "claude"
@@ -258,6 +262,7 @@ build_nix_local() {
       [[ -n "$s" ]] && svcs_nix="${svcs_nix}      \"${s}\"\n"
     done <<< "$ALLOWED_SERVICES"
     out="${out}
+    devcontainer.network.allowedHosts = [ ];
     devcontainer.network.allowedServices = [
 $(printf '%b' "$svcs_nix")    ];"
   fi
@@ -310,4 +315,10 @@ fi
 echo
 gum style --bold --foreground 82 "Done. Next steps:"
 gum style "  1. Review the generated files."
-gum style "  2. Run: devenv shell --profile=devcontainer -- code ."
+if echo "$TWEAKS" | grep -q "antigravity"; then
+  gum style "  2. Run: devenv shell --profile=devcontainer -- antigravity ."
+elif echo "$TWEAKS" | grep -q "vscode"; then
+  gum style "  2. Run: devenv shell --profile=devcontainer -- code ."
+else
+  gum style "  2. Run: devenv shell --profile=devcontainer"
+fi

@@ -53,6 +53,7 @@ in
       pkgs.skopeo
       pkgs.slirp4netns
       pkgs.fuse-overlayfs
+      (pkgs.writeShellScriptBin "docker" ''exec ${pkgs.podman}/bin/podman "$@"'')
     ];
 
   settings =
@@ -66,6 +67,7 @@ in
   enterShell =
     cfg:
     lib.optionalString (lib.elem "podman" cfg.tweaks) ''
+      export DOCKER_HOST="unix://''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
       ${setupScript}
     '';
 }

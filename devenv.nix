@@ -35,6 +35,10 @@ let
     inherit lib;
     pkgsDevcontainer = pkgs-devcontainer;
   };
+  tweak-antigravity = import ./tweaks/antigravity.nix {
+    inherit lib;
+    pkgsDevcontainer = pkgs-devcontainer;
+  };
 
   # Fetch each vsix into the Nix store at build time
   vsixFetched = map (
@@ -249,7 +253,7 @@ in
     (inputs.devenv.modules + "/integrations/devcontainer.nix")
   ];
   options.devcontainer = {
-    enable = lib.mkEnableOption "generation .devcontainer.json for devenv integration";
+    enable = lib.mkEnableOption "generation .devcontainer/devcontainer.json for devenv integration";
 
     tweaks = mkOption {
       type = types.listOf (
@@ -259,6 +263,7 @@ in
           "gpg-agent"
           "netrc"
           "devcontainer"
+          "antigravity"
         ]
       );
       default = [ ];
@@ -411,9 +416,12 @@ in
       [ ]
       ++ tweak-vscode.packages cfg
       ++ tweak-podman.packages cfg
-      ++ tweak-devcontainer.packages cfg;
+      ++ tweak-devcontainer.packages cfg
+      ++ tweak-antigravity.packages cfg;
     enterShell = ''
-      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer.json
+      mkdir -p ${config.env.DEVENV_ROOT}/.devcontainer
+      cat ${file} > ${config.env.DEVENV_ROOT}/.devcontainer/devcontainer.json
+      rm -f ${config.env.DEVENV_ROOT}/.devcontainer.json
     ''
     + tweak-podman.enterShell cfg;
   };

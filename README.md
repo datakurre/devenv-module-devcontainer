@@ -1,6 +1,6 @@
 # devenv-module-devcontainer
 
-A [devenv](https://devenv.sh) module that generates `.devcontainer.json` for VS Code with support for rootless Podman and a fully self-contained mode.
+A [devenv](https://devenv.sh) module that generates `.devcontainer/devcontainer.json` for VS Code with support for rootless Podman and a fully self-contained mode.
 
 ## Quickstart
 
@@ -24,6 +24,9 @@ After the wizard finishes:
 ```bash
 # Activate the devcontainer profile and open VS Code — it will prompt "Reopen in Container"
 devenv shell --profile=devcontainer -- code .
+
+# Or if you chose the antigravity tweak, launch it with:
+devenv shell --profile=devcontainer -- antigravity .
 ```
 
 ### Wizard steps
@@ -99,6 +102,7 @@ imports:
 |-------|-------------|
 | `podman` | Nix-provided rootless Podman; sets `containerUser`, `HOME`, and `--userns=keep-id` |
 | `vscode` | Nix-provided VS Code on the host shell |
+| `antigravity` | Nix-provided Antigravity IDE on the host shell |
 | `gpg-agent` | Bind-mounts the host GPG agent socket into the container |
 | `netrc` | Mounts a `.netrc` file into the container (requires the `netrc` option) |
 | `devcontainer` | Installs the `@devcontainers/cli` on the host shell |
@@ -107,7 +111,7 @@ imports:
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `enable` | `true`, `false` | Enable `.devcontainer.json` generation |
+| `enable` | `true`, `false` | Enable `.devcontainer/devcontainer.json` generation |
 | `tweaks` | see [Tweaks](#tweaks) | List of tweaks to enable |
 | `vsix` | list of URL strings or `{ url; sha256 }` attrsets | Fetch `.vsix` extension files into the Nix store at eval time and install them on container creation |
 | `network.mode` | `bridge`, `host`, `named` | `bridge` (default): standard container networking; `host`: shares the host network namespace; `named`: joins the Docker/Podman network specified by `network.name` |
