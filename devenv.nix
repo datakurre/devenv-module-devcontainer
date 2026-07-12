@@ -69,6 +69,7 @@ let
       gpgSettings = tweak-gpg-agent.settings cfg;
       netrcSettings = tweak-netrc.settings cfg;
       podmanSettings = tweak-podman.settings cfg;
+      antigravitySettings = tweak-antigravity.settings cfg;
 
       # Apply host network mode
       hostNetworkSettings = lib.optionalAttrs (cfg.network.mode == "host") {
@@ -114,7 +115,7 @@ let
 
       # Merge all settings with proper list concatenation and attrset merging
       mergedSettings = lib.recursiveUpdate baseSettings (
-        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) podmanSettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings) containerNameSettings) hostnameSettings
+        lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate (lib.recursiveUpdate gpgSettings netrcSettings) podmanSettings) antigravitySettings) hostNetworkSettings) noneNetworkSettings) namedNetworkSettings) containerNameSettings) hostnameSettings
       );
 
       # Special handling for lists - concatenate instead of replace
@@ -122,6 +123,7 @@ let
         (baseSettings.mounts or [ ])
         ++ (gpgSettings.mounts or [ ])
         ++ (netrcSettings.mounts or [ ])
+        ++ (antigravitySettings.mounts or [ ])
         ++ vsixMounts
         ++ firewallMounts;
 
@@ -187,6 +189,7 @@ let
           parts = lib.filter (p: p != null && p != "") [
             (baseSettings.postStartCommand or null)
             (gpgSettings.postStartCommand or null)
+            (antigravitySettings.postStartCommand or null)
             (if firewallEnabled then "sudo /run/devcontainer-firewall" else null)
             (if firewallEnabled then "/run/devcontainer-remove-sudo" else null)
           ];
